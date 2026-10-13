@@ -5,7 +5,7 @@ export function round2(n) {
 }
 
 function earlyBird(charger, date) {
-  return charger.operator === EARLY_BIRD.operator && date.getHours() < EARLY_BIRD.endHour;
+  return charger.operator === EARLY_BIRD.operator && charger.type === 'DC' && date.getHours() < EARLY_BIRD.endHour;
 }
 
 // RM/kWh a driver pays at `date`. `condo` is the condo that owns the site, if any.

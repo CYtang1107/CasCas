@@ -27,7 +27,10 @@ test('condo price depends on resident status and TNB peak', () => {
 });
 
 test('Gentari early-bird is 15% off before 7 AM only', () => {
-  const g = { siteType: 'public', operator: 'Gentari', price: 1.4 };
+  const g = { siteType: 'public', operator: 'Gentari', type: 'DC', price: 1.4 };
+  const gAc = { siteType: 'mall', operator: 'Gentari', type: 'AC', price: 1.0 };
+  assert.equal(priceAt(gAc, new Date(2026, 9, 21, 2)), 1.0); // trial covered DC fast charging only
+  assert.equal(priceNote(gAc, new Date(2026, 9, 21, 2), null), null);
   assert.equal(priceAt(g, new Date(2026, 9, 21, 2)), 1.19);
   assert.equal(priceAt(g, new Date(2026, 9, 21, 7)), 1.4);
   assert.equal(priceNote(g, new Date(2026, 9, 21, 2), null), 'Early-bird rate');
