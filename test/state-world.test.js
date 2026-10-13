@@ -59,3 +59,16 @@ test('charts render one bar pair per hour and one path per series', () => {
   assert.equal((line.match(/<path /g) || []).length, 2);
   assert.ok(!svg.includes('NaN') && !line.includes('NaN'));
 });
+
+test('review fix: stored JSON with the wrong shape is cleaned instead of crashing', () => {
+  for (const raw of ['{"checkins":null}', '{"checkins":{"klem-dc":"x"},"sharing":[]}', '[]', 'null']) {
+    setStorage({ getItem: () => raw, setItem() {}, removeItem() {} });
+    resetState();
+    const s = loadState();
+    assert.equal(typeof s.checkins, 'object', raw);
+    assert.ok(s.checkins && !Array.isArray(s.checkins), raw);
+    assert.ok(Object.values(s.checkins).every(Array.isArray), raw);
+    assert.ok(s.sharing && !Array.isArray(s.sharing), raw);
+    assert.doesNotThrow(() => buildWorld(s), raw);
+  }
+});

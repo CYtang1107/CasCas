@@ -111,3 +111,12 @@ test('rankChargers attaches the balance note end to end', () => {
   assert.equal(r.results[0].charger.id, 'quiet');
   assert.match(r.balanceNote, /low-battery drivers/);
 });
+
+test('review fix: a charger with many problem reports leaves the picks in every mode', () => {
+  const chargers = [mk('broken', 1, { price: 1.0, reliability: 0.5 }), mk('ok1', 2), mk('ok2', 3), mk('ok3', 4)];
+  for (const pct of [8, 35, 70]) {
+    const r = run(chargers, pct);
+    assert.ok(!r.results.some((c) => c.charger.id === 'broken'), `battery ${pct}`);
+    assert.match(r.excluded.find((x) => x.charger.id === 'broken').reason, /problem reports/);
+  }
+});

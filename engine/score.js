@@ -11,6 +11,9 @@ export const MODES = {
   saver: { label: 'Saver', wCost: 0.6, wTime: 0.25, wRisk: 0.15 },
 };
 
+// Below this reliability a charger is treated as faulty and never recommended.
+export const FAULTY = 0.6;
+
 // How much charging time counts against a charger, by when the driver needs the car.
 const CHARGE_TIME_WEIGHT = { now: 1, '2h': 0.5, overnight: 0 };
 
@@ -62,6 +65,7 @@ export function rankChargers({
     const skip = (reason) => excluded.push({ charger, reason, km });
 
     if (!charger.connectors.some((p) => car.connectors.includes(p))) { skip('Plug not compatible'); continue; }
+    if (charger.reliability < FAULTY) { skip('Many recent problem reports'); continue; }
     if (km > range) { skip(`Out of range (${km.toFixed(1)} km)`); continue; }
 
     const arrival = new Date(date.getTime() + driveMinutes(km) * 60000);

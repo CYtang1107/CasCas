@@ -229,7 +229,8 @@ function drawMarkers(ctx, origin, r) {
     const res = byId.get(ch.id);
     const price = res ? res.price : priceAt(ch, ctx.clock, condo, isRes);
     const occ = res ? res.occupancy : occupancyAt(ch, ctx.clock, condo).total;
-    const cls = top.has(ch.id) ? 'pick' : off.has(ch.id) ? 'off' : (occ >= 0.8 || ch.reliability < 0.75) ? 'busy' : 'ok';
+    const faulty = ch.reliability < 0.75;
+    const cls = faulty ? 'busy' : top.has(ch.id) ? 'pick' : off.has(ch.id) ? 'off' : occ >= 0.8 ? 'busy' : 'ok';
     const shared = condo && !isRes && isOpenToVisitors(condo, ctx.clock) ? '<b class="tag">Shared now</b>' : '';
     const html = `<span class="pin ${cls}">${ch.type === 'DC' ? '⚡' : ''}${rm(price)}${shared}</span>`;
     const tip = `${esc(ch.name)}<br>${esc(ch.operator)} · ${ch.type} ${ch.kw} kW · ${Math.round(occ * 100)}% busy${off.has(ch.id) ? `<br>${esc(off.get(ch.id))}` : ''}`;
