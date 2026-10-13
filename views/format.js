@@ -1,0 +1,8 @@
+const ESC = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+export const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ESC[c]);
+export const rm = (n) => `RM${Number(n).toFixed(2)}`;
+export const rm0 = (n) => `RM${Math.round(n).toLocaleString('en-MY')}`;
+export const num = (n) => Math.round(n).toLocaleString('en-MY');
+export const pct = (x) => `${Math.round(x * 100)}%`;
+export const fmtTime = (d) => d.toLocaleString('en-MY', { weekday: 'short', hour: 'numeric', minute: '2-digit' });
+export const monthLabel = (d) => d.toLocaleString('en-MY', { month: 'short' });
