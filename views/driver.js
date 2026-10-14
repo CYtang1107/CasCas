@@ -200,8 +200,7 @@ function bind(root, ctx, ranking, car) {
     if (!c) return;
     ui.flash = '';
     if (c.isSharedVisit) { ui.stage = 'plate'; ui.pending = c.charger.id; update(root, ctx); return; }
-    book(ctx, ranking, c, car, null);
-    update(root, ctx);
+    book(root, ctx, ranking, c, car, null);
   }));
   const form = box.querySelector('#d-plate-form');
   if (form) {
@@ -212,21 +211,34 @@ function bind(root, ctx, ranking, car) {
   const act = (name, fn) => { const b = box.querySelector(`[data-act="${name}"]`); if (b) b.addEventListener('click', fn); };
   act('back', () => { ui.stage = 'pick'; ui.pending = null; update(root, ctx); });
   act('start', () => { ui.stage = 'charging'; update(root, ctx); startTimer(root, ctx); });
-  act('cancel', () => {
-    if (ui.pick?.pass) ctx.state.visitorPasses = ctx.state.visitorPasses.filter((x) => x.id !== ui.pick.pass.id);
-    ui.stage = 'pick'; ui.pick = null; ctx.state.booking = null; ctx.save(); update(root, ctx);
+  act('cancel', async () => {
+    const p = ui.pick;
+    if (ctx.api && p?.bookingRef) {
+      const r = await ctx.api.cancel(p.bookingRef.id, p.bookingRef.cancelToken);
+      if (!r.ok) { ui.flash = `Couldn't cancel: ${r.error}`; update(root, ctx); return; }
+    } else if (p?.pass) {
+      ctx.state.visitorPasses = ctx.state.visitorPasses.filter((x) => x.id !== p.pass.id);
+    }
+    ui.stage = 'pick'; ui.pick = null; ctx.state.booking = null; ctx.save();
+    if (ctx.api) ctx.refresh(); else update(root, ctx);
   });
   act('stop', () => { stopTimer(); ui.stage = 'done'; update(root, ctx); });
-  const checkin = (ok) => {
+  const checkin = async (ok) => {
     const note = (box.querySelector('#d-note')?.value || '').trim();
-    const list = ctx.state.checkins[ui.pick.chargerId] || [];
-    ctx.state.checkins[ui.pick.chargerId] = [...list, { ok, note, at: ctx.clock.getTime() }];
+    const record = { ok, note, at: ctx.clock.getTime() };
+    if (ctx.api) {
+      const r = await ctx.api.checkin({ chargerId: ui.pick.chargerId, ...record });
+      if (!r.ok) { ui.flash = `Couldn't save your check-in: ${r.error}`; update(root, ctx); return; }
+    } else {
+      const list = ctx.state.checkins[ui.pick.chargerId] || [];
+      ctx.state.checkins[ui.pick.chargerId] = [...list, record];
+    }
     ctx.state.booking = null;
     ctx.save();
     ui.flash = ok ? 'Thanks. Your check-in raised this charger\'s reliability score.' : 'Thanks. The JMB and operator can now see this problem.';
     ui.stage = 'pick';
     ui.pick = null;
-    ctx.rerender();
+    if (ctx.api) ctx.refresh(); else ctx.rerender();
   };
   act('ok', () => checkin(true));
   act('problem', () => checkin(false));
@@ -242,34 +254,51 @@ function confirmVisitor(root, ctx, ranking, car, form) {
   if (!isValidPlate(plate)) { fail('Enter a number plate with letters and numbers, for example WXY 1234.'); return; }
   if (!form.querySelector('#d-consent').checked) { fail('Tick the box to share your plate with the condo management.'); return; }
   if (!canAutoApprove(c.condo, c.arrival)) { back(`${c.condo.name} is not sharing at that time. Pick another charger.`); return; }
-  const pass = createPass({
-    id: `pass-${ctx.clock.getTime()}-${c.charger.id}`, condoId: c.condo.id, chargerId: c.charger.id, plate,
-    slotStart: c.arrival.getTime(), minutes: CONST.holdMinutes + c.stopChargeMin, now: ctx.clock.getTime(),
-  });
-  ui.pending = null;
-  book(ctx, ranking, c, car, pass);
-  update(root, ctx);
+  book(root, ctx, ranking, c, car, { plate, consent: true });
 }
 
 // Hold the bay, record the session (anonymous) and, for visitors, the plate pass.
-function book(ctx, ranking, c, car, pass) {
+// Shared mode: the server saves it and approves the pass itself; nothing is confirmed until it answers.
+async function book(root, ctx, ranking, c, car, visitor) {
   const power = c.charger.type === 'DC' ? Math.min(c.charger.kw, car.dcKw) : Math.min(c.charger.kw, car.acKw);
   const session = buildSession({
     ranking, chosenId: c.charger.id, at: ctx.clock.getTime(), anonNo: anonNumber(ctx.state), resident: !!ui.homeId,
   });
-  addSession(ctx.state, session);
-  if (pass) ctx.state.visitorPasses = [...ctx.state.visitorPasses, pass];
+  const start = c.arrival.getTime();
+  const slotMinutes = Math.max(60, Math.ceil((CONST.holdMinutes + c.stopChargeMin) / 30) * 30);
+  const end = start + slotMinutes * 60000;
+  let pass = null;
+  let bookingRef = null;
+  if (ctx.api) {
+    const r = await ctx.api.book({ session, booking: { chargerId: c.charger.id, start, end }, pass: visitor || undefined });
+    if (!r.ok) {
+      ui.stage = 'pick'; ui.pending = null;
+      ui.flash = r.status === 0 ? 'Couldn\'t save your booking, try again.' : r.error;
+      update(root, ctx);
+      return;
+    }
+    pass = r.data.pass || null;
+    bookingRef = { id: r.data.bookingId, cancelToken: r.data.cancelToken };
+  } else {
+    addSession(ctx.state, session);
+    if (visitor) {
+      pass = createPass({ id: `pass-${start}-${c.charger.id}`, condoId: c.condo.id, chargerId: c.charger.id, plate: visitor.plate, slotStart: start, minutes: slotMinutes, now: ctx.clock.getTime() });
+      ctx.state.visitorPasses = [...ctx.state.visitorPasses, pass];
+    }
+  }
+  ui.pending = null;
   ui.pick = {
     chargerId: c.charger.id, name: c.charger.name, price: c.price, kWhTarget: c.deliveredKwh, power,
     batteryKwh: car.batteryKwh, startPct: ui.battery, bookedAt: ctx.clock.getTime(),
-    session: { kWh: 0, minutes: 0 }, pass,
-    slotEnd: pass ? pass.slotEnd : c.arrival.getTime() + Math.max(60, Math.ceil((CONST.holdMinutes + c.stopChargeMin) / 30) * 30) * 60000,
+    session: { kWh: 0, minutes: 0 }, pass, bookingRef,
+    slotEnd: pass ? pass.slotEnd : end,
     walk: c.reasons.find((x) => x.includes('min walk to')) || null,
     saving: session.nearestCostRm - session.costRm, minutesVsNearest: session.minutesVsNearest,
   };
   ui.stage = 'booked';
   ctx.state.booking = { chargerId: c.charger.id, at: ctx.clock.getTime() };
   ctx.save();
+  if (ctx.api) ctx.refresh(); else update(root, ctx);
 }
 
 function startTimer(root, ctx) {
