@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: cascas
+    runtime: node
+    plan: free
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: TZ
+        value: Asia/Kuala_Lumpur
+      - key: OCM_KEY
+        sync: false
+      - key: JMB_SECRET
+        generateValue: true

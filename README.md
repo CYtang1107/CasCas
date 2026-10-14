@@ -33,8 +33,41 @@ Shared EV charging for Sime Darby Property townships. Prototype for the SDP Univ
 
 ## Run locally
 
+Shared mode (website + API, bookings shared across browsers):
+
+    npm install
+    npm start
+    # open http://localhost:4300
+
+Local mode only (no server; everything stays on one device, like GitHub Pages):
+
     python -m http.server 8765
     # open http://localhost:8765
+
+The header shows which mode is running: "Shared demo" or "This device only".
+
+## Shared demo on Render
+
+One free Render web service serves both the website and the API (`render.yaml`).
+
+1. Sign in to render.com with GitHub → **New → Blueprint** → pick this repo → **Apply**.
+2. Optional: set `OCM_KEY` (Open Charge Map key) in the service's Environment tab. The key stays on the server.
+3. Open the service URL. The first visit after 15 minutes idle can take up to a minute while it wakes.
+
+The public demo is shared by everyone and resets when the server restarts. Do not enter a real number plate.
+
+### JMB PINs for the demo
+
+| Condo | PIN |
+|---|---|
+| Residensi Lumina | 4821 |
+| Serini Park | 7305 |
+| Kenanga Heights | 1946 |
+| Vista Melati | 5582 |
+| Azalea Suites | 3017 |
+| Teratai Residence | 6643 |
+
+Without the PIN, the JMB tab shows income and totals only. Plates, the session log and sharing settings need that condo's PIN. For a real pilot, set `JMB_PINS` as JSON (for example `{"lumina":"…"}`) in Render.
 
 ## Tests
 
