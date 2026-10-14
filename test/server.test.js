@@ -1,0 +1,144 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { createApp } from '../server/app.js';
+import { DEMO_CHARGERS } from '../data/chargers-demo.js';
+import { CONDO_SITES } from '../data/chargers.js';
+
+const fixture = JSON.parse(fs.readFileSync(new URL('./fixtures/ocm-sample.json', import.meta.url), 'utf8'));
+const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'cascas-srv-'));
+const WED11 = new Date(2026, 9, 21, 11).getTime();
+const WED20 = new Date(2026, 9, 21, 20).getTime();
+
+async function start(opts = {}) {
+  const app = createApp({ dataDir: opts.dataDir || tmp(), secret: 'test', pins: { lumina: '4821', serini: '7305' },
+    ocmKey: opts.ocmKey ?? '', fetchFn: opts.fetchFn || (async () => { throw new Error('offline'); }), now: opts.now });
+  const server = await new Promise((r) => { const s = app.listen(0, () => r(s)); });
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const call = async (method, url, body, token) => {
+    const res = await fetch(base + url, { method, headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) }, body: body ? JSON.stringify(body) : undefined });
+    return { status: res.status, body: await res.json().catch(() => null), headers: res.headers };
+  };
+  const raw = (method, url, body) => fetch(base + url, { method, headers: { 'content-type': 'application/json' }, body });
+  return { call, raw, close: () => new Promise((r) => server.close(r)) };
+}
+
+const session = (extra = {}) => ({ at: WED11, anonId: 'V12', role: 'visitor', mode: 'balanced', chargerId: 'cs-lumina', condoId: 'lumina',
+  topPickId: 'cs-lumina', nearestId: 'klem-dc', choice: 'pick1', kWh: 14, costRm: 15.4, nearestCostRm: 18.2, minutesVsNearest: 3, overstayMin: 0, ...extra });
+const booking = (start = WED11) => ({ chargerId: 'cs-lumina', start, end: start + 150 * 60000 });
+
+test('health, static files and no data files served', async () => {
+  const s = await start();
+  assert.deepEqual((await s.call('GET', '/api/health')).body, { ok: true });
+  const page = await s.raw('GET', '/');
+  assert.equal(page.status, 200);
+  assert.ok((await page.text()).includes('CasCas'));
+  assert.equal(page.headers.get('cache-control'), 'no-cache');
+  assert.equal((await s.raw('GET', '/server/data/store.json')).status, 404);
+  assert.equal((await s.raw('GET', '/package.json')).status, 404);
+  assert.equal((await s.raw('GET', '/engine/access.js')).status, 200);
+  assert.equal((await s.call('GET', '/api/nope')).status, 404);
+  await s.close();
+});
+
+test('chargers: demo without a key, live with a working key, key never sent to the browser', async () => {
+  const off = await start();
+  const demo = (await off.call('GET', '/api/chargers')).body;
+  assert.equal(demo.source, 'demo');
+  assert.equal(demo.chargers.length, CONDO_SITES.length + DEMO_CHARGERS.length);
+  await off.close();
+  const on = await start({ ocmKey: 'secret-key', fetchFn: async () => ({ ok: true, json: async () => fixture }) });
+  const live = await on.call('GET', '/api/chargers');
+  assert.equal(live.body.source, 'live');
+  assert.ok(!JSON.stringify(live.body).includes('secret-key'));
+  await on.close();
+});
+
+test('a visitor booking inside sharing hours is approved and fills a bay', async () => {
+  const s = await start();
+  const r = await s.call('POST', '/api/bookings', { session: session(), booking: booking(), pass: { plate: 'wxy 1234', consent: true } });
+  assert.equal(r.status, 201);
+  assert.equal(r.body.pass.plate, 'WXY1234');
+  assert.ok(r.body.bookingId && r.body.cancelToken);
+  const world = (await s.call('GET', `/api/world?at=${WED11 + 60000}`)).body;
+  assert.equal(world.activeBays['cs-lumina'], 1);
+  assert.equal((await s.call('GET', `/api/world?at=${WED11 + 200 * 60000}`)).body.activeBays['cs-lumina'], undefined);
+  await s.close();
+});
+
+test('the server refuses passes outside sharing hours or with a bad plate or no consent', async () => {
+  const s = await start();
+  const late = await s.call('POST', '/api/bookings', { session: session({ at: WED20 }), booking: booking(WED20), pass: { plate: 'WXY1234', consent: true } });
+  assert.equal(late.status, 409);
+  assert.equal((await s.call('POST', '/api/bookings', { session: session(), booking: booking(), pass: { plate: '1234', consent: true } })).status, 400);
+  assert.equal((await s.call('POST', '/api/bookings', { session: session(), booking: booking(), pass: { plate: 'WXY1234' } })).status, 400);
+  assert.equal((await s.call('POST', '/api/bookings', { session: { ...session(), anonId: 'hacker' }, booking: booking() })).status, 400);
+  assert.equal((await s.call('POST', '/api/bookings', { session: session({ chargerId: 'klem-dc', condoId: null }), booking: booking(), pass: { plate: 'WXY1234', consent: true } })).status, 400);
+  await s.close();
+});
+
+test('only the booker can cancel; cancelling removes the pass', async () => {
+  const s = await start();
+  const r = (await s.call('POST', '/api/bookings', { session: session(), booking: booking(), pass: { plate: 'WXY1234', consent: true } })).body;
+  assert.equal((await s.call('DELETE', `/api/bookings/${r.bookingId}`, { cancelToken: 'nope' })).status, 403);
+  assert.equal((await s.call('DELETE', `/api/bookings/${r.bookingId}`, { cancelToken: r.cancelToken })).status, 200);
+  assert.equal((await s.call('DELETE', `/api/bookings/${r.bookingId}`, { cancelToken: r.cancelToken })).status, 404);
+  const login = (await s.call('POST', '/api/jmb/login', { condoId: 'lumina', pin: '4821' })).body;
+  assert.deepEqual((await s.call('GET', '/api/jmb/lumina', null, login.token)).body.passes, []);
+  await s.close();
+});
+
+test('public summary has totals only; plates need the right PIN', async () => {
+  const s = await start();
+  await s.call('POST', '/api/bookings', { session: session(), booking: booking(), pass: { plate: 'WXY1234', consent: true } });
+  const sum = await s.call('GET', '/api/condos/lumina/summary');
+  assert.deepEqual(Object.keys(sum.body).sort(), ['count', 'followRate', 'overstayFeesRm', 'savedRm']);
+  assert.ok(!JSON.stringify(sum.body).includes('WXY'));
+  assert.equal((await s.call('GET', '/api/jmb/lumina')).status, 401);
+  assert.equal((await s.call('POST', '/api/jmb/login', { condoId: 'lumina', pin: '0000' })).status, 401);
+  const serini = (await s.call('POST', '/api/jmb/login', { condoId: 'serini', pin: '7305' })).body;
+  assert.equal((await s.call('GET', '/api/jmb/lumina', null, serini.token)).status, 401);
+  const lumina = (await s.call('POST', '/api/jmb/login', { condoId: 'lumina', pin: '4821' })).body;
+  const data = (await s.call('GET', '/api/jmb/lumina', null, lumina.token)).body;
+  assert.equal(data.passes[0].plate, 'WXY1234');
+  assert.equal(data.sessions.length, 1);
+  assert.ok(!('plate' in data.sessions[0]));
+  await s.close();
+});
+
+test('JMB sharing settings are validated, saved and visible in the world', async () => {
+  const s = await start();
+  const { token } = (await s.call('POST', '/api/jmb/login', { condoId: 'lumina', pin: '4821' })).body;
+  const good = { enabled: false, days: 'weekdays', start: 9, end: 17, reservedBays: 2, visitorPrice: 1.2 };
+  assert.equal((await s.call('PUT', '/api/jmb/lumina/sharing', { sharing: { ...good, start: 18 } }, token)).status, 400);
+  assert.equal((await s.call('PUT', '/api/jmb/lumina/sharing', { sharing: good }, token)).status, 200);
+  assert.equal((await s.call('PUT', '/api/jmb/lumina/sharing', { sharing: good })).status, 401);
+  assert.equal((await s.call('GET', '/api/world')).body.sharing.lumina.enabled, false);
+  const blocked = await s.call('POST', '/api/bookings', { session: session(), booking: booking(), pass: { plate: 'WXY1234', consent: true } });
+  assert.equal(blocked.status, 409);
+  await s.close();
+});
+
+test('check-ins are shared; bad JSON and bad check-ins get 400', async () => {
+  const s = await start();
+  assert.equal((await s.call('POST', '/api/checkins', { chargerId: 'klem-dc', ok: false, note: 'x'.repeat(500), at: WED11 })).status, 201);
+  const w = (await s.call('GET', '/api/world')).body;
+  assert.equal(w.checkins['klem-dc'][0].note.length, 120);
+  assert.equal((await s.call('POST', '/api/checkins', { chargerId: 'klem-dc', ok: 'yes', at: WED11 })).status, 400);
+  const bad = await s.raw('POST', '/api/checkins', '{bad');
+  assert.equal(bad.status, 400);
+  assert.deepEqual(await bad.json(), { error: 'Invalid JSON' });
+  await s.close();
+});
+
+test('data survives a server restart', async () => {
+  const dir = tmp();
+  const a = await start({ dataDir: dir });
+  await a.call('POST', '/api/bookings', { session: session(), booking: booking(), pass: { plate: 'WXY1234', consent: true } });
+  await a.close();
+  const b = await start({ dataDir: dir });
+  assert.equal((await b.call('GET', `/api/world?at=${WED11 + 60000}`)).body.activeBays['cs-lumina'], 1);
+  await b.close();
+});
