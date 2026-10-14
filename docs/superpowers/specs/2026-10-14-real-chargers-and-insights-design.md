@@ -134,6 +134,29 @@ Added below the existing cards in `views/jmb.js`, labelled "Simulated history + 
 
 ---
 
+## Also in scope: visitor access by number plate
+
+Management decides whether its condo shares at all, using the existing sharing settings (on/off and sharing hours). There is no manual approval step: **while sharing is on and inside sharing hours, every visitor booking is approved automatically.** Outside those hours, or with sharing off, the bay is not offered to visitors (current `isOpenToVisitors` behaviour).
+
+**Driver side.** When a visitor (not a resident of that condo) books a condo bay:
+
+1. A required **number plate** field: `normalisePlate(raw)` uppercases, removes spaces and dashes; `isValidPlate(p)` accepts 2–10 letters and digits containing at least one letter and one digit (e.g. `WXY1234`, `VEP88`).
+2. A required consent tick-box: "My plate is shared with the condo management only to let me in."
+3. On booking: "Approved: show plate WXY 1234 at the guardhouse, 11:00–12:00." Residents never enter a plate.
+
+**Management side (JMB view).** A new "Expected visitors" card lists today's and upcoming approved visitor bookings for the condo: time slot, bay, plate. It is the list the guardhouse checks. Changing sharing to off stops new visitor bookings; already-approved ones stay listed.
+
+**Data and privacy.**
+
+- Plate records live in `state.visitorPasses` (`{ id, condoId, chargerId, plate, slotStart, slotEnd, createdAt }`), separate from `state.sessions`.
+- Session records and all analytics keep the anonymous `anonId`; a session never contains a plate.
+- Passes are deleted 30 days after `slotEnd` (`purgePasses(passes, now)` on load).
+- Prototype limit: everything is on one device; the guard's list on another phone needs piece 4.
+
+**Code.** `engine/access.js` (new, pure): `normalisePlate`, `isValidPlate`, `canAutoApprove(condo, date)` (= sharing on and inside hours), `createPass(...)`, `upcomingPasses(passes, condoId, now)`, `purgePasses(passes, now)`. `state.js` cleans and keeps `visitorPasses`.
+
+**Testing.** `test/access.test.js`: plate cleaning and validity cases; auto-approve inside hours, outside hours and with sharing off; upcoming list ordering and condo filter; purge at 30 days; a booking's session record has no plate field.
+
 ## Also in scope: remove the SDP view
 
 The app keeps two views, **Driver** and **JMB**. Removed:
