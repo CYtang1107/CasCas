@@ -109,7 +109,7 @@ function pickHtml(r, ctx) {
     <article class="pick ${i === 0 ? 'first' : ''}">
       <div class="pick-top"><span class="rank">${i + 1}</span>
         <div><h3>${esc(c.charger.name)}</h3>
-        <p class="muted">${esc(c.charger.operator)} · ${c.charger.type} ${c.charger.kw} kW · ${rm(c.price)}/kWh</p></div></div>
+        <p class="muted">${esc(c.charger.operator)} · ${c.charger.type} ${c.charger.kw} kW · ${rm(c.price)}/kWh${c.charger.priceEstimated ? ' (est.)' : ''}</p></div></div>
       <ul class="reasons">${c.reasons.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>
       <button class="btn ${i === 0 ? 'primary' : ''}" type="button" data-book="${c.charger.id}">Book this bay</button>
     </article>`).join('');
@@ -233,7 +233,7 @@ function drawMarkers(ctx, origin, r) {
     const cls = faulty ? 'busy' : top.has(ch.id) ? 'pick' : off.has(ch.id) ? 'off' : occ >= 0.8 ? 'busy' : 'ok';
     const shared = condo && !isRes && isOpenToVisitors(condo, ctx.clock) ? '<b class="tag">Shared now</b>' : '';
     const html = `<span class="pin ${cls}">${ch.type === 'DC' ? '⚡' : ''}${rm(price)}${shared}</span>`;
-    const tip = `${esc(ch.name)}<br>${esc(ch.operator)} · ${ch.type} ${ch.kw} kW · ${Math.round(occ * 100)}% busy${off.has(ch.id) ? `<br>${esc(off.get(ch.id))}` : ''}`;
+    const tip = `${esc(ch.name)}<br>${esc(ch.operator)} · ${ch.type} ${ch.kw} kW · ${Math.round(occ * 100)}% busy (est.)${ch.pilot ? '<br>Pilot condo (simulated)' : ''}${off.has(ch.id) ? `<br>${esc(off.get(ch.id))}` : ''}`;
     L.marker([ch.lat, ch.lng], { icon: L.divIcon({ html, className: 'pin-wrap', iconSize: null }) }).bindTooltip(tip).addTo(layer);
   }
   L.circleMarker([origin.lat, origin.lng], { radius: 8, className: 'me' }).bindTooltip('You are here').addTo(layer);

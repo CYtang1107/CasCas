@@ -182,3 +182,6 @@ td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
   .roles a { flex: 1; text-align: center; }
 }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+.source { margin: 0; font-size: 0.78rem; color: var(--muted); }
+.source a { color: inherit; }
+.loading { padding: 32px 16px; color: var(--muted); }

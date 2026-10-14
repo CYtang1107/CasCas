@@ -1,5 +1,7 @@
 import { APP } from './config.js';
 import { CLOCK_PRESETS } from './data/places.js';
+import { CONDOS } from './data/condos.js';
+import { loadChargers } from './data/ocm.js';
 import { loadState, saveState, resetState } from './state.js';
 import { buildWorld } from './engine/world.js';
 import { renderDriver, resetDriver } from './views/driver.js';
@@ -8,6 +10,7 @@ import { renderJmb } from './views/jmb.js';
 const VIEWS = { driver: renderDriver, jmb: renderJmb };
 let state = loadState();
 let clock = CLOCK_PRESETS[0].date();
+let chargers = null; // set once loadChargers() finishes
 
 function currentRole() {
   const id = location.hash.slice(1);
@@ -20,8 +23,18 @@ function render() {
     if (a.dataset.role === role) a.setAttribute('aria-current', 'page');
     else a.removeAttribute('aria-current');
   });
-  const ctx = { state, clock, world: buildWorld(state), save: () => saveState(state), rerender: render };
-  VIEWS[role](document.getElementById('view'), ctx);
+  const view = document.getElementById('view');
+  if (!chargers) { view.innerHTML = '<p class="loading">Loading chargers…</p>'; return; }
+  const ctx = { state, clock, world: buildWorld(state, CONDOS, chargers), save: () => saveState(state), rerender: render };
+  VIEWS[role](view, ctx);
+}
+
+function showSource({ source, ageDays }) {
+  const el = document.getElementById('data-source');
+  const credit = ' · Data © <a href="https://openchargemap.org" target="_blank" rel="noopener">Open Charge Map</a> contributors';
+  if (source === 'live') el.innerHTML = `Chargers: live from Open Charge Map${credit}`;
+  else if (source === 'saved') el.innerHTML = `Chargers: saved copy, ${ageDays} day${ageDays === 1 ? '' : 's'} old${credit}`;
+  else el.textContent = 'Chargers: demo data';
 }
 
 function toLocalInput(d) {
@@ -58,3 +71,8 @@ function initChrome() {
 
 initChrome();
 render();
+loadChargers().then((r) => {
+  chargers = r.chargers;
+  showSource(r);
+  render();
+});
