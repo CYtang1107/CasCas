@@ -17,9 +17,8 @@ const dayStart = (v) => {
   return Number.isNaN(d.getTime()) ? null : d.getTime();
 };
 
-export function insightsSection(condo, charger, ctx) {
+export function insightsSection(condo, charger, ctx, real) {
   const now = ctx.clock.getTime();
-  const real = filterSessions(ctx.state.sessions, { condoId: condo.id });
   const all = [...simulateHistory(condo, charger, now), ...real].sort((a, b) => a.at - b.at);
   const recent = filterSessions(all, { from: now - 30 * DAY, to: now + 1 });
   const monthStart = new Date(ctx.clock.getFullYear(), ctx.clock.getMonth(), 1).getTime();
@@ -93,9 +92,9 @@ export function insightsSection(condo, charger, ctx) {
   return { html, bind };
 }
 
-export function visitorsHtml(condo, ctx) {
+export function visitorsHtml(condo, ctx, allPasses) {
   const s = condo.sharing;
-  const passes = upcomingPasses(ctx.state.visitorPasses, condo.id, ctx.clock.getTime());
+  const passes = upcomingPasses(allPasses, condo.id, ctx.clock.getTime());
   const bayName = (id) => ctx.world.chargers.find((ch) => ch.id === id)?.name || id;
   const status = s.enabled
     ? `Visitors are approved automatically during sharing hours (${DAYS_LABEL[s.days]}, ${s.start}:00 to ${s.end}:00).`

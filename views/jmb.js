@@ -4,7 +4,7 @@ import { simulateCondoMonth, rampSeries } from '../engine/economics.js';
 import { validateSharing } from '../engine/sharing.js';
 import { barChart24, lineChart } from './charts.js';
 import { esc, rm, rm0, num, pct, monthLabel } from './format.js';
-import { insightsSection, visitorsHtml } from './jmb-insights.js';
+import { privateSection } from './jmb-shared.js';
 
 let condoId = null;
 const PEAK_HOURS = Array.from({ length: TNB.peakEndHour - TNB.peakStartHour }, (_, i) => TNB.peakStartHour + i);
@@ -20,10 +20,10 @@ export function renderJmb(root, ctx) {
   const sinkingYear = 0.1 * condo.monthlyFee * condo.units * 12;
   const boost = (sim.jmbIncome * 12) / sinkingYear;
   const months = Array.from({ length: 6 }, (_, i) => monthLabel(new Date(start.getFullYear(), start.getMonth() - 5 + i, 1)));
-  const checkins = ctx.state.checkins[charger.id] || [];
+  const checkins = (ctx.checkins || ctx.state.checkins)[charger.id] || [];
   const problems = checkins.filter((c) => !c.ok);
 
-  const insights = insightsSection(condo, charger, ctx);
+  const priv = privateSection(condo, charger, ctx);
   root.innerHTML = `
   <div class="jmb">
     <div class="view-head">
@@ -62,7 +62,8 @@ export function renderJmb(root, ctx) {
         <p class="muted">Hardware payback on ${condo.bays} bays at ${rm0(CONST.hardwarePerBay)} each: ${sim.paybackMonths ? `${sim.paybackMonths} months` : 'not reached at these prices'}. CO₂ avoided: ${num(sim.co2AvoidedKg)} kg this month.</p>
       </section>
       <section class="card"><h3>Sharing with outside drivers</h3>
-        <form id="j-share" class="form" novalidate>
+        ${priv.canEdit ? '' : '<p class="muted">Log in with the condo PIN below to change these settings.</p>'}
+        <form id="j-share" class="form" novalidate><fieldset class="plain" ${priv.canEdit ? '' : 'disabled'}>
           <label class="check"><input type="checkbox" id="j-en" ${s.enabled ? 'checked' : ''}> Open idle bays to outside drivers</label>
           <label class="field">Days <select id="j-days">
             <option value="weekdays">Weekdays</option><option value="weekends">Weekends</option><option value="all">Every day</option></select></label>
@@ -76,12 +77,12 @@ export function renderJmb(root, ctx) {
           </div>
           <p id="j-err" class="error" role="alert" hidden></p>
           <p class="muted">Residents pay ${rm(condo.residentPrice)}/kWh. TNB peak hours add ${rm(condo.peakSurcharge)}. Changes update this dashboard and the driver map.</p>
-        </form>
+        </fieldset></form>
       </section>
     </div>
 
     <section class="card"><h3>Charger health</h3>
-      <p class="muted">Reliability ${pct(charger.reliability)} · ${checkins.length} check-ins from drivers on this device.</p>
+      <p class="muted">Reliability ${pct(charger.reliability)} · ${checkins.length} check-ins ${ctx.api ? 'shared by all drivers' : 'from drivers on this device'}.</p>
       <div class="tbl"><table>
         <thead><tr><th>Bay</th><th>Status</th><th>Latest report</th></tr></thead>
         <tbody>${Array.from({ length: condo.bays }, (_, i) => {
@@ -90,8 +91,7 @@ export function renderJmb(root, ctx) {
         }).join('')}</tbody>
       </table></div>
     </section>
-    ${visitorsHtml(condo, ctx)}
-    ${insights.html}
+    ${priv.html}
   </div>`;
 
   const $ = (sel) => root.querySelector(sel);
@@ -99,7 +99,7 @@ export function renderJmb(root, ctx) {
   $('#j-days').value = s.days;
   $('#j-condo').addEventListener('change', (e) => { condoId = e.target.value; ctx.rerender(); });
   $('#j-share').addEventListener('submit', (e) => e.preventDefault());
-  $('#j-share').addEventListener('change', () => {
+  $('#j-share').addEventListener('change', async () => {
     const next = {
       enabled: $('#j-en').checked,
       days: $('#j-days').value,
@@ -112,9 +112,14 @@ export function renderJmb(root, ctx) {
     const box = $('#j-err');
     if (err) { box.textContent = err; box.hidden = false; return; }
     box.hidden = true;
+    if (priv.save) {
+      const r = await priv.save(next);
+      if (!r.ok) { box.textContent = r.error; box.hidden = false; }
+      return;
+    }
     ctx.state.sharing[condo.id] = next;
     ctx.save();
     ctx.rerender();
   });
-  insights.bind(root);
+  priv.bind(root);
 }

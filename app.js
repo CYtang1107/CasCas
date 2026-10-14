@@ -34,7 +34,7 @@ function render() {
   // Shared mode: sharing settings, check-ins and booked bays come from the server.
   const worldState = api ? { ...state, sharing: shared.sharing, checkins: shared.checkins } : state;
   const list = api ? chargers.map((ch) => ({ ...ch, bookedBays: shared.activeBays[ch.id] || 0 })) : chargers;
-  const ctx = { state, clock, api, world: buildWorld(worldState, CONDOS, list), save: () => saveState(state), rerender: render, refresh };
+  const ctx = { state, clock, api, checkins: worldState.checkins, world: buildWorld(worldState, CONDOS, list), save: () => saveState(state), rerender: render, refresh };
   VIEWS[role](view, ctx);
 }
 
