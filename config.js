@@ -16,3 +16,12 @@ export const CONST = {
   holdMinutes: 15,
   drawFactor: 0.5,        // share of an occupied hour a car actually draws power
 };
+
+// Open Charge Map. Get a free key at https://openchargemap.org (My Profile → My Apps). Empty = skip the live fetch.
+export const OCM = {
+  key: '',
+  radiusKm: 15,
+  maxResults: 200,
+  timeoutMs: 6000,
+  cacheMaxAgeDays: 7,
+};
