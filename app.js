@@ -2,6 +2,7 @@ import { APP } from './config.js';
 import { CLOCK_PRESETS } from './data/places.js';
 import { CONDOS } from './data/condos.js';
 import { loadChargers } from './data/ocm.js';
+import { createApi, detectServer } from './data/api.js';
 import { loadState, saveState, resetState } from './state.js';
 import { buildWorld } from './engine/world.js';
 import { purgePasses } from './engine/access.js';
@@ -13,7 +14,9 @@ let state = loadState();
 state.visitorPasses = purgePasses(state.visitorPasses, Date.now());
 saveState(state);
 let clock = CLOCK_PRESETS[0].date();
-let chargers = null; // set once loadChargers() finishes
+let chargers = null; // set once chargers are loaded
+let api = null; // set in shared mode (a CasCas server answered)
+let shared = { sharing: {}, checkins: {}, activeBays: {} };
 
 function currentRole() {
   const id = location.hash.slice(1);
@@ -28,8 +31,21 @@ function render() {
   });
   const view = document.getElementById('view');
   if (!chargers) { view.innerHTML = '<p class="loading">Loading chargers…</p>'; return; }
-  const ctx = { state, clock, world: buildWorld(state, CONDOS, chargers), save: () => saveState(state), rerender: render };
+  // Shared mode: sharing settings, check-ins and booked bays come from the server.
+  const worldState = api ? { ...state, sharing: shared.sharing, checkins: shared.checkins } : state;
+  const list = api ? chargers.map((ch) => ({ ...ch, bookedBays: shared.activeBays[ch.id] || 0 })) : chargers;
+  const ctx = { state, clock, api, world: buildWorld(worldState, CONDOS, list), save: () => saveState(state), rerender: render, refresh };
   VIEWS[role](view, ctx);
+}
+
+// Shared mode: fetch the shared world for the demo clock, then draw. Falls back to local mode if the server is gone.
+async function refresh() {
+  if (api) {
+    const r = await api.world(clock.getTime());
+    if (r.ok) shared = r.data;
+    else { api = null; showMode('This device only (server unavailable)'); }
+  }
+  render();
 }
 
 function showSource({ source, ageDays }) {
@@ -38,6 +54,10 @@ function showSource({ source, ageDays }) {
   if (source === 'live') el.innerHTML = `Chargers: live from Open Charge Map${credit}`;
   else if (source === 'saved') el.innerHTML = `Chargers: saved copy, ${ageDays} day${ageDays === 1 ? '' : 's'} old${credit}`;
   else el.textContent = 'Chargers: demo data';
+}
+
+function showMode(text) {
+  document.getElementById('data-mode').textContent = text;
 }
 
 function toLocalInput(d) {
@@ -58,11 +78,11 @@ function initChrome() {
     if (preset.value === 'custom') { custom.hidden = false; custom.value = toLocalInput(clock); custom.focus(); return; }
     custom.hidden = true;
     clock = CLOCK_PRESETS.find((p) => p.id === preset.value).date();
-    render();
+    refresh();
   });
   custom.addEventListener('change', () => {
     const d = new Date(custom.value);
-    if (!Number.isNaN(d.getTime())) { clock = d; render(); }
+    if (!Number.isNaN(d.getTime())) { clock = d; refresh(); }
   });
   document.getElementById('reset').addEventListener('click', () => {
     state = resetState();
@@ -72,10 +92,25 @@ function initChrome() {
   window.addEventListener('hashchange', render);
 }
 
-initChrome();
-render();
-loadChargers().then((r) => {
-  chargers = r.chargers;
-  showSource(r);
+async function start() {
+  initChrome();
   render();
-});
+  const candidate = createApi();
+  if (await detectServer(candidate)) {
+    api = candidate;
+    const r = await api.chargers();
+    const loaded = r.ok ? r.data : await loadChargers();
+    chargers = loaded.chargers;
+    showSource(loaded);
+    showMode('Shared demo: bookings are visible to everyone');
+    await refresh();
+  } else {
+    const loaded = await loadChargers();
+    chargers = loaded.chargers;
+    showSource(loaded);
+    showMode('This device only');
+    render();
+  }
+}
+
+start();

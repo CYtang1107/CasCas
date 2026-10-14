@@ -16,5 +16,5 @@ const app = createApp({
   ocmKey: process.env.OCM_KEY || '',
 });
 
-const port = Number(process.env.PORT) || 4100;
+const port = Number(process.env.PORT) || 4300;
 app.listen(port, () => console.log(`CasCas shared server on http://localhost:${port}`));
