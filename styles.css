@@ -190,3 +190,7 @@ td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
 .more li { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
 .approved { background: var(--surface); border: 1px solid var(--accent); border-radius: var(--radius); padding: 10px 12px; }
 .saved { font-weight: 600; }
+.card-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+.insights h4 { margin: 16px 0 8px; font-size: 0.95rem; }
+.log-filters { align-items: end; flex-wrap: wrap; gap: 12px; }
+.visitors, .insights { margin-top: 16px; }

@@ -61,6 +61,8 @@ test('charts render one bar pair per hour and one path per series', () => {
   const line = lineChart({ labels: ['May', 'Jun'], series: [{ label: 'A', values: [1, 2], cls: 'la' }, { label: 'B', values: [0, 1], cls: 'lb' }] });
   assert.equal((line.match(/<path /g) || []).length, 2);
   assert.ok(!svg.includes('NaN') && !line.includes('NaN'));
+  const pctLine = lineChart({ labels: ['a', 'b'], series: [{ label: 'Rate', values: [40, 60], cls: 'la' }], money: false, unit: '%', ariaLabel: 'Follow rate' });
+  assert.ok(pctLine.includes('100%') && !pctLine.includes('RM') && pctLine.includes('aria-label="Follow rate"'));
 });
 
 test('review fix: stored JSON with the wrong shape is cleaned instead of crashing', () => {

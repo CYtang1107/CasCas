@@ -43,16 +43,16 @@ export function barChart24({ a, b, shade = [], aLabel, bLabel }) {
   return `${s}</svg>${legend([[aLabel, 'sa'], [bLabel, 'sb']])}`;
 }
 
-export function lineChart({ labels, series }) {
+export function lineChart({ labels, series, money = true, unit = '', ariaLabel = 'Monthly income by source' }) {
   const max = niceMax(Math.max(...series.flatMap((se) => se.values), 1));
   const iw = W - P.l - P.r;
   const ih = H - P.t - P.b;
   const x = (i) => P.l + (labels.length === 1 ? iw / 2 : (i * iw) / (labels.length - 1));
   const y = (v) => P.t + ih - (v / max) * ih;
-  let s = `<svg viewBox="0 0 ${W} ${H}" class="chart" role="img" aria-label="Monthly income by source">`;
+  let s = `<svg viewBox="0 0 ${W} ${H}" class="chart" role="img" aria-label="${ariaLabel}">`;
   for (const t of [0, max / 2, max]) {
     s += `<line x1="${P.l}" x2="${W - P.r}" y1="${y(t)}" y2="${y(t)}" class="grid"/>`;
-    s += `<text x="${P.l - 6}" y="${y(t) + 4}" class="axis" text-anchor="end">${short(t, true)}</text>`;
+    s += `<text x="${P.l - 6}" y="${y(t) + 4}" class="axis" text-anchor="end">${short(t, money)}${unit}</text>`;
   }
   for (const se of series) {
     const d = se.values.map((v, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ');

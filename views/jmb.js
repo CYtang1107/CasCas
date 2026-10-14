@@ -4,6 +4,7 @@ import { simulateCondoMonth, rampSeries } from '../engine/economics.js';
 import { validateSharing } from '../engine/sharing.js';
 import { barChart24, lineChart } from './charts.js';
 import { esc, rm, rm0, num, pct, monthLabel } from './format.js';
+import { insightsSection, visitorsHtml } from './jmb-insights.js';
 
 let condoId = null;
 const PEAK_HOURS = Array.from({ length: TNB.peakEndHour - TNB.peakStartHour }, (_, i) => TNB.peakStartHour + i);
@@ -22,6 +23,7 @@ export function renderJmb(root, ctx) {
   const checkins = ctx.state.checkins[charger.id] || [];
   const problems = checkins.filter((c) => !c.ok);
 
+  const insights = insightsSection(condo, charger, ctx);
   root.innerHTML = `
   <div class="jmb">
     <div class="view-head">
@@ -88,6 +90,8 @@ export function renderJmb(root, ctx) {
         }).join('')}</tbody>
       </table></div>
     </section>
+    ${visitorsHtml(condo, ctx)}
+    ${insights.html}
   </div>`;
 
   const $ = (sel) => root.querySelector(sel);
@@ -112,4 +116,5 @@ export function renderJmb(root, ctx) {
     ctx.save();
     ctx.rerender();
   });
+  insights.bind(root);
 }
