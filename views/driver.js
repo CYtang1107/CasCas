@@ -10,8 +10,8 @@ import { normalisePlate, isValidPlate, formatPlate, canAutoApprove, createPass }
 import { addSession, anonNumber } from '../state.js';
 import { esc, rm, fmtTime, fmtClock } from './format.js';
 
-const NEED = [['now', 'Now'], ['2h', 'Within 2 h'], ['overnight', 'Overnight']];
-const fresh = () => ({ carId: 'emas7', battery: 35, placeId: 'klem', homeId: '', needBy: 'now', stage: 'pick', pick: null, flash: '', pending: null, plate: '' });
+const PARK_OPTIONS = [['30m', '30 min'], ['2h', '2 h'], ['4h', '4 h'], ['overnight', 'Overnight']];
+const fresh = () => ({ carId: 'emas7', battery: 35, placeId: 'klem', homeId: '', parkFor: '30m', stage: 'pick', pick: null, flash: '', pending: null, plate: '' });
 let ui = fresh();
 let map = null;
 let layer = null;
@@ -38,8 +38,8 @@ export function renderDriver(root, ctx) {
         <select id="d-place">${PLACES.map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join('')}</select></label>
       <label class="field">I live at
         <select id="d-home"><option value="">Not a resident here</option>${condos.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select></label>
-      <fieldset class="field seg"><legend>Need the car</legend>
-        ${NEED.map(([v, l]) => `<label><input type="radio" name="d-need" value="${v}"> ${l}</label>`).join('')}
+      <fieldset class="field seg"><legend>How long will you park?</legend>
+        ${PARK_OPTIONS.map(([v, l]) => `<label><input type="radio" name="d-park" value="${v}"> ${l}</label>`).join('')}
       </fieldset>
       <p class="muted">Demo time: ${esc(fmtTime(ctx.clock))}. Change it at the top to see prices and sharing change.</p>
     </section>
@@ -55,13 +55,13 @@ export function renderDriver(root, ctx) {
   $('#d-batt').value = ui.battery;
   $('#d-place').value = ui.placeId;
   $('#d-home').value = ui.homeId;
-  $(`input[name="d-need"][value="${ui.needBy}"]`).checked = true;
+  $(`input[name="d-park"][value="${ui.parkFor}"]`).checked = true;
 
   $('#d-car').addEventListener('change', (e) => { ui.carId = e.target.value; update(root, ctx); });
   $('#d-batt').addEventListener('input', (e) => { ui.battery = Number(e.target.value); update(root, ctx); });
   $('#d-place').addEventListener('change', (e) => { ui.placeId = e.target.value; update(root, ctx); });
   $('#d-home').addEventListener('change', (e) => { ui.homeId = e.target.value; update(root, ctx); });
-  root.querySelectorAll('input[name="d-need"]').forEach((r) => r.addEventListener('change', (e) => { ui.needBy = e.target.value; update(root, ctx); }));
+  root.querySelectorAll('input[name="d-park"]').forEach((r) => r.addEventListener('change', (e) => { ui.parkFor = e.target.value; update(root, ctx); }));
 
   initMap($('#d-map'), $('#d-map-fallback'));
   update(root, ctx);
@@ -76,7 +76,7 @@ function compute(ctx) {
   const destination = place.id === 'here' ? null : place;
   const ranking = rankChargers({
     ...ctx.world, car, batteryPct: ui.battery, origin, destination, date: ctx.clock,
-    residentCondoId: ui.homeId || null, needBy: ui.needBy,
+    residentCondoId: ui.homeId || null, parkFor: ui.parkFor,
   });
   return { car, origin, ranking };
 }
@@ -250,7 +250,7 @@ function book(ctx, ranking, c, car, pass) {
   addSession(ctx.state, session);
   if (pass) ctx.state.visitorPasses = [...ctx.state.visitorPasses, pass];
   ui.pick = {
-    chargerId: c.charger.id, name: c.charger.name, price: c.price, kWhTarget: c.kWh, power,
+    chargerId: c.charger.id, name: c.charger.name, price: c.price, kWhTarget: c.deliveredKwh, power,
     batteryKwh: car.batteryKwh, startPct: ui.battery, bookedAt: ctx.clock.getTime(),
     session: { kWh: 0, minutes: 0 }, pass,
     saving: session.nearestCostRm - session.costRm, minutesVsNearest: session.minutesVsNearest,

@@ -14,8 +14,10 @@ export const MODES = {
 // Below this reliability a charger is treated as faulty and never recommended.
 export const FAULTY = 0.6;
 
-// How much charging time counts against a charger, by when the driver needs the car.
-const CHARGE_TIME_WEIGHT = { now: 1, '2h': 0.5, overnight: 0 };
+// How long the driver will park. Charging inside the stop costs no time; a charger that cannot add
+// MIN_USEFUL_KWH in the stop is dropped (this keeps slow condo AC bays away from quick stops).
+export const PARK = { '30m': { min: 30, label: '30 min' }, '2h': { min: 120, label: '2 h' }, '4h': { min: 240, label: '4 h' }, overnight: { min: 720, label: 'overnight' } };
+const MIN_USEFUL_KWH = 5;
 
 export function modeFor(batteryPct) {
   if (batteryPct <= 15) return 'urgent';
@@ -46,7 +48,7 @@ export function formatDuration(min) {
 
 export function rankChargers({
   chargers, condos = [], car, batteryPct, origin, destination = null, date,
-  residentCondoId = null, needBy = 'now', occupancyFn = occupancyAt,
+  residentCondoId = null, parkFor = '30m', occupancyFn = occupancyAt,
 }) {
   const mode = modeFor(batteryPct);
   const w = MODES[mode];
@@ -77,6 +79,9 @@ export function rankChargers({
 
     const power = charger.type === 'DC' ? Math.min(charger.kw, car.dcKw) : Math.min(charger.kw, car.acKw);
     const chargeMin = (kWh / power) * 60;
+    const park = PARK[parkFor] || PARK['30m'];
+    const deliveredKwh = Math.min(kWh, (power * park.min) / 60);
+    if (kWh > 0 && deliveredKwh < Math.min(kWh, MIN_USEFUL_KWH)) { skip(`Too slow for a ${park.label} stop`); continue; }
     const price = priceAt(charger, arrival, condo, isResident);
     const detourMin = detourMinutes(origin, charger, dest);
     const waitMin = waitMinutes(occ.total);
@@ -84,7 +89,9 @@ export function rankChargers({
       charger, condo, isResident, isSharedVisit: !!condo && !isResident,
       km, arrival, price, kWh, cost: kWh * price, chargeMin, detourMin, waitMin,
       occupancy: occ.total, reliability: charger.reliability,
-      timeMin: detourMin + waitMin + chargeMin * (CHARGE_TIME_WEIGHT[needBy] ?? 1),
+      deliveredKwh, full: deliveredKwh >= kWh - 1e-9, parkLabel: park.label,
+      addedKm: deliveredKwh / car.efficiencyKwhPerKm,
+      timeMin: detourMin + waitMin + Math.max(0, chargeMin - park.min),
     });
   }
 
@@ -108,10 +115,11 @@ function normaliser(values) {
 }
 
 function reasonsFor(c, target) {
-  const r = [`RM${c.cost.toFixed(2)} for ${Math.round(c.kWh)} kWh`];
+  const kWh = c.full ? c.kWh : c.deliveredKwh;
+  const r = [`RM${(kWh * c.price).toFixed(2)} for ${Math.round(kWh)} kWh`];
   r.push(c.detourMin < 1 ? 'On your way' : `+${Math.round(c.detourMin)} min detour`);
   if (c.waitMin >= 1) r.push(`~${Math.round(c.waitMin)} min wait`);
-  if (c.kWh > 0) r.push(`${formatDuration(c.chargeMin)} to ${target}%`);
+  if (c.kWh > 0) r.push(c.full ? `${formatDuration(c.chargeMin)} to ${target}%` : `+${Math.round(c.addedKm)} km in your ${c.parkLabel} stop`);
   r.push(`${Math.round(c.reliability * 100)}% reliable`);
   const note = priceNote(c.charger, c.arrival, c.condo);
   if (note) r.push(note);

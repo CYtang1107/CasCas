@@ -51,10 +51,10 @@ test('condo bays: residents always, outsiders only while sharing is open', () =>
   const night = new Date(2026, 9, 21, 20, 0);
   const outsiderNight = run([site], 40, { condos: [condo], date: night });
   assert.match(outsiderNight.excluded[0].reason, /Residents only/);
-  const residentNight = run([site], 40, { condos: [condo], date: night, residentCondoId: 'c1' });
+  const residentNight = run([site], 40, { condos: [condo], date: night, residentCondoId: 'c1', parkFor: 'overnight' });
   assert.equal(residentNight.results[0].isResident, true);
   assert.equal(residentNight.results[0].price, 1.0);
-  const outsiderDay = run([site], 40, { condos: [condo] });
+  const outsiderDay = run([site], 40, { condos: [condo], parkFor: '2h' });
   assert.equal(outsiderDay.results[0].isSharedVisit, true);
   assert.equal(outsiderDay.results[0].price, 1.1);
   assert.ok(outsiderDay.results[0].reasons.includes('Shared condo bay'));
@@ -119,4 +119,27 @@ test('review fix: a charger with many problem reports leaves the picks in every 
     assert.ok(!r.results.some((c) => c.charger.id === 'broken'), `battery ${pct}`);
     assert.match(r.excluded.find((x) => x.charger.id === 'broken').reason, /problem reports/);
   }
+});
+
+test('a short stop drops chargers too slow to add a useful charge', () => {
+  const ac = mk('ac', 1, { type: 'AC', kw: 7, connectors: ['Type2'], price: 0.9 });
+  const dc = mk('dc', 2);
+  const short = run([ac, dc], 35, { parkFor: '30m' });
+  assert.deepEqual(short.results.map((c) => c.charger.id), ['dc']);
+  assert.equal(short.excluded.find((x) => x.charger.id === 'ac').reason, 'Too slow for a 30 min stop');
+  const twoHours = run([ac, dc], 35, { parkFor: '2h' });
+  const slow = twoHours.results.find((c) => c.charger.id === 'ac');
+  assert.ok(slow, 'kept for a 2 h stop');
+  assert.equal(slow.full, false);
+  assert.ok(Math.abs(slow.deliveredKwh - 14) < 1e-9);
+  assert.ok(slow.reasons.includes('+93 km in your 2 h stop'));
+  assert.equal(slow.reasons[0], 'RM12.60 for 14 kWh'); // the cost of what the stop delivers
+});
+
+test('charging that fits inside the stop costs no time', () => {
+  const ac = mk('ac', 1, { type: 'AC', kw: 7, connectors: ['Type2'], price: 0.9 });
+  const dc = mk('dc', 3);
+  const r = run([ac, dc], 35, { parkFor: 'overnight' });
+  assert.equal(r.results[0].charger.id, 'ac');
+  assert.equal(r.results[0].full, true);
 });

@@ -25,7 +25,7 @@ Shared EV charging for Sime Darby Property townships. Prototype for the SDP Univ
 
 1. **Driver**, Wed 11 AM, battery 35%, "Not a resident here": three picks with reasons; condo pins tagged "Shared now".
 2. Drag battery to 8%: Urgent mode, the nearest DC charger wins. Back to 75%: Saver mode, cheaper chargers first.
-3. Book a shared condo bay (from the picks or "Choose another charger"): enter plate WXY 1234, tick consent → "Approved, show plate at the guardhouse", plus how it compares with the nearest charger.
+3. Set "How long will you park?" to 2 h: condo bays now qualify and show "+93 km in your 2 h stop" (at 30 min they are dropped as too slow). Book a shared condo bay (from the picks or "Choose another charger"): enter plate WXY 1234, tick consent → "Approved, show plate at the guardhouse", plus how it compares with the nearest charger.
 4. **JMB**, Residensi Lumina: the plate is in "Expected visitors"; "Driver behaviour" shows the follow rate, savings and your booking at the top of the session log (anonymous). Export CSV.
 5. Turn sharing off: visitors can no longer book; income falls.
 
