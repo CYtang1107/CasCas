@@ -6,16 +6,19 @@ import { priceAt } from '../engine/pricing.js';
 import { isOpenToVisitors } from '../engine/sharing.js';
 import { occupancyAt } from '../engine/occupancy.js';
 import { buildSession } from '../engine/insights.js';
+import { describeCharger } from '../engine/detail.js';
 import { normalisePlate, isValidPlate, formatPlate, canAutoApprove, createPass } from '../engine/access.js';
 import { addSession, anonNumber } from '../state.js';
 import { esc, rm, fmtTime, fmtClock } from './format.js';
 
 const PARK_OPTIONS = [['30m', '30 min'], ['2h', '2 h'], ['4h', '4 h'], ['overnight', 'Overnight']];
-const fresh = () => ({ carId: 'emas7', battery: 35, placeId: 'klem', homeId: '', parkFor: '30m', stage: 'pick', pick: null, flash: '', pending: null, plate: '' });
+const fresh = () => ({ carId: 'emas7', battery: 35, placeId: 'klem', homeId: '', parkFor: '30m', stage: 'pick', pick: null, flash: '', pending: null, plate: '', selected: null });
 let ui = fresh();
 let map = null;
 let layer = null;
 let timer = null;
+let markers = new Map();
+let last = null; // latest { ranking, car }, for the detail panel
 
 export function resetDriver() {
   stopTimer();
@@ -30,6 +33,7 @@ export function renderDriver(root, ctx) {
   <div class="driver">
     <section class="panel trip" aria-label="Trip">
       <h2>Plan a charge</h2>
+      <div class="fields">
       <label class="field">Car
         <select id="d-car">${CARS.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select></label>
       <label class="field">Battery now <output id="d-batt-out"></output>
@@ -41,12 +45,16 @@ export function renderDriver(root, ctx) {
       <fieldset class="field seg"><legend>How long will you park?</legend>
         ${PARK_OPTIONS.map(([v, l]) => `<label><input type="radio" name="d-park" value="${v}"> ${l}</label>`).join('')}
       </fieldset>
+      </div>
       <p class="muted">Demo time: ${esc(fmtTime(ctx.clock))}. Change it at the top to see prices and sharing change.</p>
     </section>
-    <section class="map-wrap">
-      <div id="d-map" class="map" aria-label="Map of chargers around KL East"></div>
-      <p id="d-map-fallback" class="notice" hidden>The map could not load. The list of picks still works.</p>
-    </section>
+    <div class="map-row" id="d-map-row">
+      <section class="map-wrap">
+        <div id="d-map" class="map" aria-label="Map of chargers around KL East. Click a charger for details."></div>
+        <p id="d-map-fallback" class="notice" hidden>The map could not load. The list of picks still works.</p>
+      </section>
+      <aside id="d-detail" class="panel detail" aria-label="Charger details" aria-live="polite" hidden></aside>
+    </div>
     <section class="panel results" id="d-results" aria-live="polite"></section>
   </div>`;
 
@@ -84,10 +92,12 @@ function compute(ctx) {
 function update(root, ctx) {
   const { car, origin, ranking } = compute(ctx);
   root.querySelector('#d-batt-out').textContent = `${ui.battery}%`;
-  drawMarkers(ctx, origin, ranking);
+  last = { ranking, car };
+  drawMarkers(root, ctx, origin, ranking, car);
   const box = root.querySelector('#d-results');
   box.innerHTML = ui.stage === 'pick' ? pickHtml(ranking, ctx) : stageHtml(ctx, ranking);
   bind(root, ctx, ranking, car);
+  renderDetail(root, ctx, ranking, car);
 }
 
 function modeLine(mode) {
@@ -114,16 +124,17 @@ function pickHtml(r, ctx) {
         <div><h3>${esc(c.charger.name)}</h3>
         <p class="muted">${esc(c.charger.operator)} · ${c.charger.type} ${c.charger.kw} kW · ${rm(c.price)}/kWh${c.charger.priceEstimated ? ' (est.)' : ''}</p></div></div>
       <ul class="reasons">${c.reasons.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>
-      <button class="btn ${i === 0 ? 'primary' : ''}" type="button" data-book="${c.charger.id}">Book this bay</button>
+      <div class="btn-row"><button class="btn ${i === 0 ? 'primary' : ''}" type="button" data-book="${c.charger.id}">Book this bay</button>
+      <button class="btn small" type="button" data-detail="${c.charger.id}">Details</button></div>
     </article>`).join('');
   const off = r.excluded.length
     ? `<details class="excluded"><summary>${r.excluded.length} chargers not suitable right now</summary><ul>${r.excluded.map((x) => `<li>${esc(x.charger.name)}: ${esc(x.reason)}</li>`).join('')}</ul></details>`
     : '';
   const rest = r.results.slice(3);
   const more = rest.length
-    ? `<details class="more"><summary>Choose another charger (${rest.length})</summary><ul>${rest.map((c) => `<li><span>${esc(c.charger.name)} · ${rm(c.price)}/kWh · ${c.km.toFixed(1)} km</span> <button class="btn small" type="button" data-book="${c.charger.id}">Book</button></li>`).join('')}</ul></details>`
+    ? `<details class="more"><summary>Choose another charger (${rest.length})</summary><ul>${rest.map((c) => `<li><span>${esc(c.charger.name)} · ${rm(c.price)}/kWh · ${c.km.toFixed(1)} km</span> <span class="btn-row"><button class="btn small" type="button" data-detail="${c.charger.id}">Details</button><button class="btn small" type="button" data-book="${c.charger.id}">Book</button></span></li>`).join('')}</ul></details>`
     : '';
-  return head + note + cards + more + off;
+  return head + note + `<div class="picks">${cards}</div>` + more + off;
 }
 
 function stageHtml(ctx, r) {
@@ -195,13 +206,8 @@ function savingLine(p) {
 
 function bind(root, ctx, ranking, car) {
   const box = root.querySelector('#d-results');
-  box.querySelectorAll('[data-book]').forEach((btn) => btn.addEventListener('click', () => {
-    const c = ranking.results.find((x) => x.charger.id === btn.dataset.book);
-    if (!c) return;
-    ui.flash = '';
-    if (c.isSharedVisit) { ui.stage = 'plate'; ui.pending = c.charger.id; update(root, ctx); return; }
-    book(root, ctx, ranking, c, car, null);
-  }));
+  box.querySelectorAll('[data-book]').forEach((btn) => btn.addEventListener('click', () => startBooking(root, ctx, ranking, car, btn.dataset.book)));
+  box.querySelectorAll('[data-detail]').forEach((btn) => btn.addEventListener('click', () => select(root, ctx, btn.dataset.detail, true)));
   const form = box.querySelector('#d-plate-form');
   if (form) {
     const input = form.querySelector('#d-plate');
@@ -242,6 +248,14 @@ function bind(root, ctx, ranking, car) {
   };
   act('ok', () => checkin(true));
   act('problem', () => checkin(false));
+}
+
+function startBooking(root, ctx, ranking, car, id) {
+  const c = ranking.results.find((x) => x.charger.id === id);
+  if (!c) return;
+  ui.flash = '';
+  if (c.isSharedVisit) { ui.stage = 'plate'; ui.pending = c.charger.id; update(root, ctx); return; }
+  book(root, ctx, ranking, c, car, null);
 }
 
 function confirmVisitor(root, ctx, ranking, car, form) {
@@ -330,9 +344,10 @@ function initMap(el, fallback) {
   layer = L.layerGroup().addTo(map);
 }
 
-function drawMarkers(ctx, origin, r) {
+function drawMarkers(root, ctx, origin, r, car) {
   if (!map) return;
   layer.clearLayers();
+  markers = new Map();
   const top = new Set(r.results.slice(0, 3).map((c) => c.charger.id));
   const off = new Map(r.excluded.map((x) => [x.charger.id, x.reason]));
   const byId = new Map(r.results.map((c) => [c.charger.id, c]));
@@ -346,10 +361,90 @@ function drawMarkers(ctx, origin, r) {
     const cls = faulty ? 'busy' : top.has(ch.id) ? 'pick' : off.has(ch.id) ? 'off' : occ >= 0.8 ? 'busy' : 'ok';
     const shared = condo && !isRes && isOpenToVisitors(condo, ctx.clock) ? '<b class="tag">Shared now</b>' : '';
     const html = `<span class="pin ${cls}">${ch.type === 'DC' ? '⚡' : ''}${rm(price)}${shared}</span>`;
-    const tip = `${esc(ch.name)}<br>${esc(ch.operator)} · ${ch.type} ${ch.kw} kW · ${Math.round(occ * 100)}% busy (est.)${ch.pilot ? '<br>Pilot condo (simulated)' : ''}${off.has(ch.id) ? `<br>${esc(off.get(ch.id))}` : ''}`;
-    L.marker([ch.lat, ch.lng], { icon: L.divIcon({ html, className: 'pin-wrap', iconSize: null }) }).bindTooltip(tip).addTo(layer);
+    const marker = L.marker([ch.lat, ch.lng], { icon: L.divIcon({ html: html.replace('class="pin ', `class="pin ${ui.selected === ch.id ? 'sel ' : ''}`), className: 'pin-wrap', iconSize: null }), title: ch.name })
+      .bindPopup(popupHtml(ch, price, !!shared), { maxWidth: 260 }).addTo(layer);
+    marker.on('click', () => select(root, ctx, ch.id, false));
+    marker.on('popupopen', (e) => {
+      e.popup.getElement()?.querySelector('[data-detail]')?.addEventListener('click', () => select(root, ctx, ch.id, false));
+    });
+    markers.set(ch.id, marker);
   }
   L.circleMarker([origin.lat, origin.lng], { radius: 8, className: 'me' }).bindTooltip('You are here').addTo(layer);
+}
+
+// ---- Charger details (PlugShare-style): popup on the map + a panel beside it ----
+
+function select(root, ctx, id, fromList) {
+  ui.selected = id;
+  if (!last) return;
+  renderDetail(root, ctx, last.ranking, last.car);
+  if (fromList && map) {
+    const m = markers.get(id);
+    if (m) { map.setView(m.getLatLng(), Math.max(map.getZoom(), 15)); m.openPopup(); }
+    root.querySelector('#d-map-row')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+}
+
+function renderDetail(root, ctx, ranking, car) {
+  const aside = root.querySelector('#d-detail');
+  const row = root.querySelector('#d-map-row');
+  if (!aside || !row) return;
+  const ch = ui.selected ? ctx.world.chargers.find((x) => x.id === ui.selected) : null;
+  const wasOpen = !aside.hidden;
+  if (!ch) {
+    ui.selected = null;
+    aside.hidden = true;
+    row.classList.remove('has-detail');
+    if (wasOpen && map) map.invalidateSize();
+    return;
+  }
+  const condo = ctx.world.condos.find((c) => c.id === ch.condoId) || null;
+  const checkins = (ctx.checkins || ctx.state.checkins)[ch.id] || [];
+  const d = describeCharger({ charger: ch, ranking, condo, date: ctx.clock, isResident: !!condo && condo.id === ui.homeId, checkins });
+  aside.innerHTML = detailHtml(d);
+  aside.hidden = false;
+  row.classList.add('has-detail');
+  if (!wasOpen && map) map.invalidateSize();
+  aside.querySelector('[data-close]').addEventListener('click', () => { ui.selected = null; renderDetail(root, ctx, ranking, car); });
+  const bookBtn = aside.querySelector('[data-detail-book]');
+  if (bookBtn) bookBtn.addEventListener('click', () => {
+    startBooking(root, ctx, ranking, car, d.id);
+    root.querySelector('#d-results')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+}
+
+function detailHtml(d) {
+  const specs = [d.operator, `${d.type} ${d.kw} kW`, d.connectors.join(', '), `${d.bays} bay${d.bays === 1 ? '' : 's'}`];
+  if (d.pilot) specs.push('Pilot condo (simulated)');
+  const notes = [d.priceNote, d.access].filter(Boolean);
+  const checkins = d.recentCheckins.length
+    ? `<ul class="checkins">${d.recentCheckins.map((c) => `<li><span class="chip ${c.ok ? 'on' : 'warn'}">${c.ok ? 'Worked' : 'Problem'}</span> ${esc(fmtTime(new Date(c.at)))}${c.note ? ` · ${esc(c.note)}` : ''}</li>`).join('')}</ul>`
+    : '<p class="muted">No check-ins yet. Be the first after you charge.</p>';
+  return `
+    <div class="detail-head"><h3>${esc(d.name)}</h3>
+      <button class="btn small" type="button" data-close aria-label="Close details">Close</button></div>
+    ${d.address ? `<p class="muted">${esc(d.address)}</p>` : ''}
+    <p class="muted">${specs.map(esc).join(' · ')}</p>
+    <p class="verdict ${d.bookable ? 'ok' : 'off'}">${esc(d.verdict)}</p>
+    <dl class="stats">
+      <div><dt>Reliability</dt><dd>${d.reliabilityPct}%</dd></div>
+      <div><dt>Price now</dt><dd>${rm(d.priceNow)}${d.priceEstimated ? ' est.' : ''}</dd></div>
+      <div><dt>Busy now</dt><dd>${d.occupancyPct}%</dd></div>
+      <div><dt>Wait</dt><dd>${d.waitMin ? `~${d.waitMin} min` : 'None'}</dd></div>
+    </dl>
+    ${notes.length ? `<p class="muted">${notes.map(esc).join(' · ')}</p>` : ''}
+    ${d.reasons.length ? `<h4>For your trip</h4><ul class="reasons">${d.reasons.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}
+    <h4>Recent check-ins (${d.checkinCount})</h4>
+    ${checkins}
+    <div class="btn-row">
+      ${d.bookable && ui.stage === 'pick' ? `<button class="btn primary" type="button" data-detail-book="${esc(d.id)}">Book this bay</button>` : ''}
+      <a class="btn" href="${esc(d.directionsUrl)}" target="_blank" rel="noopener">Directions</a>
+    </div>`;
+}
+
+function popupHtml(ch, price, shared) {
+  return `<div class="pop"><b>${esc(ch.name)}</b><br>${esc(ch.operator)} · ${ch.type} ${ch.kw} kW<br>${esc(ch.connectors.join(', '))} · ${rm(price)}/kWh${ch.priceEstimated ? ' (est.)' : ''}${shared ? '<br><b>Shared now</b>' : ''}
+    <br><button class="btn small" type="button" data-detail="${esc(ch.id)}">Details</button></div>`;
 }
 
 function qrSvg(seed) {
