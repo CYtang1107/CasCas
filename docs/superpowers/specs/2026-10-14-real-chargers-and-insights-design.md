@@ -134,10 +134,22 @@ Added below the existing cards in `views/jmb.js`, labelled "Simulated history + 
 
 ---
 
+## Also in scope: remove the SDP view
+
+The app keeps two views, **Driver** and **JMB**. Removed:
+
+- `views/sdp.js`, the `SDP` tab in `index.html`, the `sdp` entry in `VIEWS` in `app.js`, and SDP-only styles (`.sdp …`) in `styles.css`.
+- An old `#sdp` link opens the Driver view instead (unknown hash → default view).
+- `townshipSummary` and `scaleUp` in `engine/economics.js`, `CONST.sdpTownships`, and their tests, if nothing else uses them after the view is gone. The `sdp: true` flag on mall chargers stays in the demo data (harmless) but is not carried into OCM chargers.
+- README demo script step 6 (SDP view) is removed.
+
+Follow-up outside the repo: the proposal sections that mention the SDP view (2.2.2, 2.3 diagram, 2.5, 4.1.1, 4.2 step 5) are updated to two views.
+
 ## Delivery order
 
-1. Piece 1 (real chargers) → tests green → deploy to GitHub Pages.
-2. Piece 5 (insights) → tests green → deploy.
-3. Update README demo script and the proposal's 2.2 / 2.5 sections.
+1. Remove the SDP view → tests green.
+2. Piece 1 (real chargers) → tests green → deploy to GitHub Pages.
+3. Piece 5 (insights) → tests green → deploy.
+4. Update README demo script and the proposal's 2.2 / 2.3 / 2.5 / 4 sections.
 
 The user supplies the OCM API key (free signup at openchargemap.org); until then the app runs on the saved or demo data.
