@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  co2AvoidedKg, monthlyEconomics, simulateCondoMonth, townshipSummary, scaleUp, rampSeries,
+  co2AvoidedKg, monthlyEconomics, simulateCondoMonth, rampSeries,
 } from '../engine/economics.js';
 import { CONDOS } from '../data/condos.js';
 import { CHARGERS } from '../data/chargers.js';
@@ -45,20 +45,6 @@ test('visitors raise JMB income', () => {
   assert.ok(withV.jmbIncome > without.jmbIncome);
 });
 
-test('township totals and scale-up', () => {
-  const condos = [condo, { ...condo, id: 'c2', bays: 6 }];
-  const chargers = [site, { ...site, id: 'cs-c2', condoId: 'c2', bays: 6 }, { id: 'mall', siteType: 'mall', sdp: true, kw: 60, bays: 4 }];
-  const t = townshipSummary(condos, chargers, oct, { occupancyFn: () => ({ resident: 0.2, visitor: 0, total: 0.2 }) });
-  assert.equal(t.perCondo.length, 2);
-  assert.equal(t.totals.condoBays, 16);
-  assert.ok(t.totals.sdpSiteKwh > 0);
-  close(t.totals.kWh, t.totals.condoKwh + t.totals.sdpSiteKwh);
-  const s = scaleUp(t.totals, 28);
-  assert.equal(s.bays, 448);
-  close(s.shareOfNationalTarget, 448 / 30000);
-  close(s.jmbIncomeYear, t.totals.jmbIncome * 12 * 28);
-});
-
 test('rampSeries ends at the current value', () => {
   const r = rampSeries(100);
   assert.equal(r.length, 6);
@@ -67,7 +53,7 @@ test('rampSeries ends at the current value', () => {
 });
 
 test('simulated KL East: sharing condos earn more per unit than non-sharing ones', () => {
-  const { perCondo } = townshipSummary(CONDOS, CHARGERS, oct);
+  const perCondo = CONDOS.map((c) => ({ condo: c, ...simulateCondoMonth(c, CHARGERS.find((ch) => ch.condoId === c.id), oct) }));
   const avg = (rows) => rows.reduce((s, r) => s + r.perUnitSaving, 0) / rows.length;
   const sharing = perCondo.filter((r) => r.condo.sharing.enabled);
   const closed = perCondo.filter((r) => !r.condo.sharing.enabled);

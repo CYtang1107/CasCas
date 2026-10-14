@@ -4,9 +4,8 @@ import { loadState, saveState, resetState } from './state.js';
 import { buildWorld } from './engine/world.js';
 import { renderDriver, resetDriver } from './views/driver.js';
 import { renderJmb } from './views/jmb.js';
-import { renderSdp } from './views/sdp.js';
 
-const VIEWS = { driver: renderDriver, jmb: renderJmb, sdp: renderSdp };
+const VIEWS = { driver: renderDriver, jmb: renderJmb };
 let state = loadState();
 let clock = CLOCK_PRESETS[0].date();
 

@@ -53,44 +53,6 @@ export function simulateCondoMonth(condo, charger, start, { occupancyFn = occupa
   return { ...econ, residentKwh, visitorKwh, residentRevenue, visitorRevenue, residentByHour, visitorByHour, utilisation };
 }
 
-export function siteMonthlyKwh(charger, start, { occupancyFn = occupancyAt, days = 30 } = {}) {
-  let kWh = 0;
-  eachHour(start, days, (t) => { kWh += occupancyFn(charger, t, null).total * charger.bays * charger.kw * CONST.drawFactor; });
-  return kWh;
-}
-
-export function townshipSummary(condos, chargers, start, opts = {}) {
-  const perCondo = condos.map((condo) => {
-    const charger = chargers.find((ch) => ch.condoId === condo.id);
-    return { condo, ...simulateCondoMonth(condo, charger, start, opts) };
-  });
-  const sdpSiteKwh = chargers
-    .filter((ch) => ch.siteType !== 'condo' && ch.sdp)
-    .reduce((s, ch) => s + siteMonthlyKwh(ch, start, opts), 0);
-  const condoKwh = perCondo.reduce((s, r) => s + r.kWhSold, 0);
-  const condoBays = condos.reduce((s, c) => s + c.bays, 0);
-  const utilisation = perCondo.reduce((s, r) => s + r.utilisation * r.condo.bays, 0) / condoBays;
-  return {
-    perCondo,
-    totals: {
-      condoKwh, sdpSiteKwh, kWh: condoKwh + sdpSiteKwh,
-      jmbIncome: perCondo.reduce((s, r) => s + r.jmbIncome, 0),
-      co2Kg: co2AvoidedKg(condoKwh + sdpSiteKwh),
-      condoBays, utilisation,
-    },
-  };
-}
-
-export function scaleUp(totals, townships) {
-  const bays = totals.condoBays * townships;
-  return {
-    townships, bays,
-    jmbIncomeYear: totals.jmbIncome * 12 * townships,
-    co2TonnesYear: (totals.co2Kg * 12 * townships) / 1000,
-    shareOfNationalTarget: bays / CONST.nationalTarget2030,
-  };
-}
-
 // Six months ending at `value`, a simple simulated ramp-up as EV ownership grows.
 export function rampSeries(value) {
   return [0.62, 0.7, 0.78, 0.85, 0.93, 1].map((f) => value * f);

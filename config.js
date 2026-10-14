@@ -15,6 +15,4 @@ export const CONST = {
   rangeBuffer: 0.1,
   holdMinutes: 15,
   drawFactor: 0.5,        // share of an occupied hour a car actually draws power
-  nationalTarget2030: 30000,
-  sdpTownships: 28,
 };

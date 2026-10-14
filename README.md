@@ -9,7 +9,6 @@ Shared EV charging for Sime Darby Property townships. Prototype for the SDP Univ
 - **Driver:** battery-aware picks across every provider around KL East. Low battery gets the nearest working charger; high battery gets cheaper, quieter ones, with demand balancing that keeps busy fast chargers free for drivers who need them.
 - **Idle-hour sharing:** condo bays open to outside drivers during set hours, with residents always first.
 - **JMB:** charging income, saving per unit per month, sinking-fund boost, sharing settings and charger health.
-- **SDP:** township totals, condo comparison, scale-up to 28 townships and pilot readiness.
 
 All data is simulated. Condo names are fictional. Prices and tariffs follow public 2026 figures (see the research brief).
 
@@ -20,7 +19,6 @@ All data is simulated. Condo names are fictional. Prices and tariffs follow publ
 3. Switch time to Tue 6:30 PM and battery to 75%: Saver mode; the demand-balancing note steers you off the busy mall charger.
 4. Book → scan → charge → report a problem: the charger's reliability drops.
 5. **JMB**: saving per unit, the day chart showing outside drivers filling idle daytime bays. Turn sharing off and watch the income fall.
-6. **SDP**: sharing condos earn more; slide to 28 townships.
 
 ## Run locally
 
