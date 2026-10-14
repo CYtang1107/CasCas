@@ -4,5 +4,14 @@
   "private": true,
   "type": "module",
   "description": "CasCas prototype: shared EV charging for SDP townships",
-  "scripts": { "test": "node --test" }
+  "scripts": {
+    "test": "node --test",
+    "start": "node server/index.js"
+  },
+  "dependencies": {
+    "express": "^4.22.3"
+  },
+  "engines": {
+    "node": ">=20"
+  }
 }
