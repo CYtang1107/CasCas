@@ -4,11 +4,14 @@ import { CONDOS } from './data/condos.js';
 import { loadChargers } from './data/ocm.js';
 import { loadState, saveState, resetState } from './state.js';
 import { buildWorld } from './engine/world.js';
+import { purgePasses } from './engine/access.js';
 import { renderDriver, resetDriver } from './views/driver.js';
 import { renderJmb } from './views/jmb.js';
 
 const VIEWS = { driver: renderDriver, jmb: renderJmb };
 let state = loadState();
+state.visitorPasses = purgePasses(state.visitorPasses, Date.now());
+saveState(state);
 let clock = CLOCK_PRESETS[0].date();
 let chargers = null; // set once loadChargers() finishes
 
