@@ -38,7 +38,7 @@ export const OCM = {
 
 **`data/chargers-demo.js`** (renamed from the public part of `data/chargers.js`): the existing 15 simulated public chargers, kept as the last-resort fallback.
 
-**`data/chargers.js`** keeps building `condoSites` from `CONDOS` and exports `CONDO_SITES`; it no longer exports a fixed public list.
+**`data/chargers.js`** keeps building the condo sites from `CONDOS` and exports `CONDO_SITES` (each marked `pilot: true`) and `CHARGERS = [...CONDO_SITES, ...DEMO_CHARGERS]`, the demo world used by tests and as the fallback.
 
 **`data/operator-prices.js`** (new): `OPERATOR_PRICES = { Gentari: { AC: 1.00, DC: 1.30 }, ChargEV: { AC: 0.90, DC: 1.30 }, JomCharge: { AC: 1.10, DC: 1.30 }, Tesla: { DC: 1.80 } }` (the rates already used in the demo data, from the research brief) and `DEFAULT_PRICE = { AC: 1.00, DC: 1.30 }`. A known operator without a rate for that type (e.g. Tesla AC) also uses the default with `priceEstimated: true`. More operators are added only with a sourced rate. Operator names are matched case-insensitively by substring (OCM titles vary, e.g. "Gentari Sdn Bhd").
 
@@ -60,11 +60,11 @@ export const OCM = {
 | `siteType` | `'public'` |
 | `source` | `'ocm'` |
 
-Returns `null` (dropped) when coordinates are missing or `UsageType` marks the site private / members-only (`UsageType.IsMembershipRequired === true` or `UsageType.Title` contains "Private").
+Returns `null` (dropped) when coordinates are missing or `UsageType.Title` contains "Private". "Public - Membership Required" sites are kept: most Malaysian networks need an app account, and dropping them would hide most real chargers.
 
 **`data/ocm.js`** (new): `loadChargers({ fetchFn = fetch, storage = localStorage, now = Date.now }) → { chargers, source, ageDays }`.
 
-1. If `OCM.key` is set, fetch `https://api.openchargemap.io/v3/poi?output=json&latitude=…&longitude=…&distance=15&distanceunit=KM&maxresults=200&compact=true&verbose=false&key=…` with a 6 s abort timeout. On success with ≥1 charger after normalising: save `{ savedAt, chargers }` to `localStorage['cascas.ocm.v1']`, return `source: 'live'`.
+1. If `OCM.key` is set, fetch `https://api.openchargemap.io/v3/poi?output=json&latitude=…&longitude=…&distance=15&distanceunit=KM&maxresults=200&compact=false&verbose=false&key=…` (`compact=false` so operator and connector titles are included) with a 6 s abort timeout. On success with ≥1 charger after normalising: save `{ savedAt, chargers }` to `localStorage['cascas.ocm.v1']`, return `source: 'live'`.
 2. On failure, timeout, empty result or no key: read the saved copy; if younger than 7 days, return `source: 'saved'` with `ageDays`.
 3. Otherwise return the demo list, `source: 'demo'`.
 
@@ -90,7 +90,7 @@ When a booking is confirmed in the driver view, append to `state.sessions` (new 
 
 ```js
 {
-  at: '2026-10-21T11:05:00',      // demo-clock time
+  at: 1792551900000,             // demo-clock time, epoch ms
   anonId: 'R12' | 'V48',          // stable per device: R = resident of a condo, V = visitor
   role: 'resident' | 'visitor',
   mode: 'urgent' | 'balanced' | 'saver',
@@ -108,7 +108,7 @@ When a booking is confirmed in the driver view, append to `state.sessions` (new 
 
 - `followRate(sessions)` → share with `choice !== 'own'`.
 - `savings(sessions)` → `{ avgRm, totalRm, avgMinutes }` vs nearest.
-- `weeklyTrend(sessions, weeks = 26)` → `[{ weekStart, followRate, count }]`.
+- `weeklyTrend(sessions, endMs, weeks = 12)` → `[{ weekStart, followRate, count }]`.
 - `byMode(sessions)` and `byRole(sessions)` → follow rate and count per group.
 - `filterSessions(sessions, { condoId, role, from, to })`.
 
@@ -121,9 +121,9 @@ When a booking is confirmed in the driver view, append to `state.sessions` (new 
 Added below the existing cards in `views/jmb.js`, labelled "Simulated history + your demo bookings":
 
 - KPI tiles: follow rate %, average RM saved per session, total RM saved this month.
-- Weekly follow-rate line (existing `lineChart`).
+- Weekly follow-rate line for the last 12 weeks (existing `lineChart`, given a non-money axis option).
 - Mode breakdown: follow rate and sessions for Urgent / Balanced / Saver.
-- Session log table (latest 50, newest first): time, anonymous ID, bay, kWh, RM, choice. Filters: All / Residents / Visitors, and date range. **Export CSV** downloads the filtered rows (Blob + `a[download]`).
+- Session log table (latest 50, newest first): time, anonymous ID, mode, kWh, RM, choice, RM saved vs nearest (the bay is always this condo's, so it is not repeated). Filters: All / Residents / Visitors, and date range. **Export CSV** downloads the filtered rows (Blob + `a[download]`).
 
 ### Testing
 
