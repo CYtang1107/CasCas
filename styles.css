@@ -86,7 +86,7 @@ main { flex: 1; width: 100%; max-width: 1280px; margin: 0 auto; padding: 18px 16
 .map-row { display: grid; gap: 16px; grid-template-columns: minmax(0, 1fr); scroll-margin-top: 84px; }
 .map-row.has-detail { grid-template-columns: minmax(0, 1fr) 380px; }
 .map-wrap { min-width: 0; }
-.map { height: 62vh; min-height: 400px; border-radius: var(--radius); border: 1px solid var(--line); }
+.map { height: 62vh; min-height: 400px; border-radius: var(--radius); border: 1px solid var(--line); isolation: isolate; } /* keep Leaflet's z-indexes under the sticky header */
 .detail { max-height: 62vh; min-height: 400px; overflow-y: auto; display: grid; gap: 10px; align-content: start; }
 .detail-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
 .detail-head h3 { margin: 0; }
@@ -216,3 +216,4 @@ fieldset.plain { border: 0; padding: 0; margin: 0; min-width: 0; display: conten
 fieldset.plain:disabled { opacity: 0.6; }
 .jmb-auth { display: flex; align-items: center; gap: 12px; margin-top: 16px; }
 .jmb-login { margin-top: 16px; }
+[hidden] { display: none !important; } /* the hidden attribute must win over display rules like .detail { display: grid } */
