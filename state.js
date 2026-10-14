@@ -1,6 +1,7 @@
 // Per-device demo state. Every storage call is guarded so private windows and blocked storage still work.
 const KEY = 'cascas.v1';
-const blank = () => ({ checkins: {}, booking: null, sharing: {} });
+export const MAX_SESSIONS = 500;
+const blank = () => ({ checkins: {}, booking: null, sharing: {}, sessions: [], visitorPasses: [], anonNo: null });
 let memory = blank();
 
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -16,6 +17,9 @@ function clean(parsed) {
     for (const [id, v] of Object.entries(parsed.sharing)) if (isObject(v)) s.sharing[id] = v;
   }
   if (isObject(parsed.booking)) s.booking = parsed.booking;
+  if (Array.isArray(parsed.sessions)) s.sessions = parsed.sessions.filter(isObject).slice(-MAX_SESSIONS);
+  if (Array.isArray(parsed.visitorPasses)) s.visitorPasses = parsed.visitorPasses.filter(isObject);
+  if (Number.isInteger(parsed.anonNo)) s.anonNo = parsed.anonNo;
   return s;
 }
 
@@ -38,4 +42,14 @@ export function resetState() {
   memory = blank();
   try { globalThis.localStorage?.removeItem(KEY); } catch { /* memory only */ }
   return memory;
+}
+
+export function addSession(state, record) {
+  state.sessions = [...state.sessions, record].slice(-MAX_SESSIONS);
+}
+
+// A random 1–99 number for this device, used in anonymous IDs such as "Visitor #48".
+export function anonNumber(state, rand = Math.random) {
+  if (!Number.isInteger(state.anonNo)) state.anonNo = 1 + Math.floor(rand() * 99);
+  return state.anonNo;
 }

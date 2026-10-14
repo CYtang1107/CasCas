@@ -1,6 +1,6 @@
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { loadState, saveState, resetState } from '../state.js';
+import { loadState, saveState, resetState, addSession, anonNumber, MAX_SESSIONS } from '../state.js';
 import { buildWorld } from '../engine/world.js';
 import { esc, rm, rm0, pct } from '../views/format.js';
 import { barChart24, lineChart } from '../views/charts.js';
@@ -8,10 +8,12 @@ import { barChart24, lineChart } from '../views/charts.js';
 const setStorage = (value) => Object.defineProperty(globalThis, 'localStorage', { value, configurable: true, writable: true });
 afterEach(() => setStorage(undefined));
 
+const BLANK = { checkins: {}, booking: null, sharing: {}, sessions: [], visitorPasses: [], anonNo: null };
+
 test('review focus: corrupt storage falls back to blank state', () => {
   setStorage({ getItem: () => '{bad json', setItem() {}, removeItem() {} });
   const s = loadState();
-  assert.deepEqual(s, { checkins: {}, booking: null, sharing: {} });
+  assert.deepEqual(s, BLANK);
 });
 
 test('review focus: storage that throws never breaks saving or reset', () => {
@@ -20,7 +22,7 @@ test('review focus: storage that throws never breaks saving or reset', () => {
   s.booking = { chargerId: 'x' };
   assert.doesNotThrow(() => saveState(s));
   assert.equal(loadState().booking.chargerId, 'x'); // kept in memory
-  assert.deepEqual(resetState(), { checkins: {}, booking: null, sharing: {} });
+  assert.deepEqual(resetState(), BLANK);
 });
 
 test('saved state round-trips through storage', () => {
@@ -71,4 +73,29 @@ test('review fix: stored JSON with the wrong shape is cleaned instead of crashin
     assert.ok(s.sharing && !Array.isArray(s.sharing), raw);
     assert.doesNotThrow(() => buildWorld(s), raw);
   }
+});
+
+test('sessions and visitor passes survive a reload; bad entries are dropped', () => {
+  const raw = JSON.stringify({ sessions: [{ at: 1 }, 'x', null, { at: 2 }], visitorPasses: [{ id: 'p1' }, 7], anonNo: 12 });
+  setStorage({ getItem: () => raw, setItem() {}, removeItem() {} });
+  resetState();
+  const s = loadState();
+  assert.deepEqual(s.sessions, [{ at: 1 }, { at: 2 }]);
+  assert.deepEqual(s.visitorPasses, [{ id: 'p1' }]);
+  assert.equal(s.anonNo, 12);
+});
+
+test('addSession keeps only the latest MAX_SESSIONS records', () => {
+  const s = resetState();
+  for (let i = 0; i < MAX_SESSIONS + 10; i++) addSession(s, { at: i });
+  assert.equal(s.sessions.length, MAX_SESSIONS);
+  assert.equal(s.sessions[0].at, 10);
+  assert.equal(s.sessions.at(-1).at, MAX_SESSIONS + 9);
+});
+
+test('anonNumber is picked once per device and then stays the same', () => {
+  const s = resetState();
+  const n = anonNumber(s, () => 0.5);
+  assert.equal(n, 50);
+  assert.equal(anonNumber(s, () => 0.1), 50);
 });
