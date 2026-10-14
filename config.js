@@ -14,7 +14,9 @@ export const CONST = {
   targetPct: 80,
   rangeBuffer: 0.1,
   holdMinutes: 15,
-  drawFactor: 0.5,        // share of an occupied hour a car actually draws power
+  drawFactor: 0.5,
+  walkKmh: 4.8,           // walking speed for charger → destination
+  overstayRmPer10Min: 1,  // fee per started 10 minutes after the slot ends (goes to the JMB)        // share of an occupied hour a car actually draws power
 };
 
 // Open Charge Map. Get a free key at https://openchargemap.org (My Profile → My Apps). Empty = skip the live fetch.

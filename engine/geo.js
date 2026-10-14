@@ -18,3 +18,8 @@ export function detourMinutes(origin, charger, destination) {
   const extra = distanceKm(origin, charger) + distanceKm(charger, destination) - distanceKm(origin, destination);
   return driveMinutes(Math.max(0, extra));
 }
+
+// Minutes on foot from a charger to where the driver is going.
+export function walkMinutes(a, b) {
+  return ((distanceKm(a, b) * CONST.roadFactor) / CONST.walkKmh) * 60;
+}

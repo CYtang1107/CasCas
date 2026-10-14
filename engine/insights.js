@@ -1,5 +1,5 @@
 // Did drivers follow CasCas's recommendation, and what did it save them vs the nearest charger?
-import { round2 } from './pricing.js';
+import { round2, overstayFee } from './pricing.js';
 
 export const CHOICE_LABEL = { pick1: 'Top pick', pick2: '2nd pick', pick3: '3rd pick', own: 'Own choice' };
 
@@ -27,6 +27,7 @@ export function buildSession({ ranking, chosenId, at, anonNo, resident }) {
     costRm: round2(chosen.cost),
     nearestCostRm: round2(nearest.cost),
     minutesVsNearest: Math.round(chosen.timeMin - nearest.timeMin),
+    overstayMin: 0,
   };
 }
 
@@ -90,4 +91,9 @@ export function toCsv(sessions) {
     CHOICE_LABEL[s.choice], (s.nearestCostRm - s.costRm).toFixed(2), s.minutesVsNearest,
   ].map(cell).join(','));
   return `${[head, ...rows].join('\n')}\n`;
+}
+
+export function overstayTotals(sessions) {
+  const over = sessions.filter((s) => s.overstayMin > 0);
+  return { count: over.length, feesRm: over.reduce((t, s) => t + overstayFee(s.overstayMin), 0) };
 }

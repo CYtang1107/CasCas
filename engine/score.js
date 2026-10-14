@@ -1,5 +1,5 @@
 import { CONST } from '../config.js';
-import { distanceKm, driveMinutes, detourMinutes } from './geo.js';
+import { distanceKm, driveMinutes, detourMinutes, walkMinutes } from './geo.js';
 import { priceAt, priceNote } from './pricing.js';
 import { isOpenToVisitors, visitorBaysFree } from './sharing.js';
 import { occupancyAt } from './occupancy.js';
@@ -89,6 +89,8 @@ export function rankChargers({
       charger, condo, isResident, isSharedVisit: !!condo && !isResident,
       km, arrival, price, kWh, cost: kWh * price, chargeMin, detourMin, waitMin,
       occupancy: occ.total, reliability: charger.reliability,
+      walkMin: destination ? walkMinutes(charger, destination) : null, destName: destination?.name || null,
+      stopChargeMin: Math.min(chargeMin, park.min),
       deliveredKwh, full: deliveredKwh >= kWh - 1e-9, parkLabel: park.label,
       addedKm: deliveredKwh / car.efficiencyKwhPerKm,
       timeMin: detourMin + waitMin + Math.max(0, chargeMin - park.min),
@@ -118,6 +120,7 @@ function reasonsFor(c, target) {
   const kWh = c.full ? c.kWh : c.deliveredKwh;
   const r = [`RM${(kWh * c.price).toFixed(2)} for ${Math.round(kWh)} kWh`];
   r.push(c.detourMin < 1 ? 'On your way' : `+${Math.round(c.detourMin)} min detour`);
+  if (c.destName && c.walkMin <= 20) r.push(`${Math.max(1, Math.round(c.walkMin))} min walk to ${c.destName}`);
   if (c.waitMin >= 1) r.push(`~${Math.round(c.waitMin)} min wait`);
   if (c.kWh > 0) r.push(c.full ? `${formatDuration(c.chargeMin)} to ${target}%` : `+${Math.round(c.addedKm)} km in your ${c.parkLabel} stop`);
   r.push(`${Math.round(c.reliability * 100)}% reliable`);

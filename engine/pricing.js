@@ -1,3 +1,4 @@
+import { CONST } from '../config.js';
 import { isPeak, EARLY_BIRD } from '../data/tariff.js';
 
 export function round2(n) {
@@ -22,4 +23,9 @@ export function priceNote(charger, date, condo) {
   if (charger.siteType === 'condo' && condo) return isPeak(date) ? 'Peak-hour price' : 'Off-peak price';
   if (earlyBird(charger, date)) return 'Early-bird rate';
   return null;
+}
+
+// Overstay fee: RM per started 10 minutes after the slot ends. Keeps shared bays moving.
+export function overstayFee(minutesOver) {
+  return minutesOver > 0 ? Math.ceil(minutesOver / 10) * CONST.overstayRmPer10Min : 0;
 }

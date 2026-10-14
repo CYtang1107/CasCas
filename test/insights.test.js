@@ -11,7 +11,7 @@ test('buildSession compares the choice with the nearest charger', () => {
   const s = buildSession({ ranking, chosenId: 'a', at: 1000, anonNo: 12, resident: false });
   assert.deepEqual(s, {
     at: 1000, anonId: 'V12', role: 'visitor', mode: 'saver', chargerId: 'a', condoId: null,
-    topPickId: 'a', nearestId: 'd', choice: 'pick1', kWh: 20, costRm: 18, nearestCostRm: 26, minutesVsNearest: 8,
+    topPickId: 'a', nearestId: 'd', choice: 'pick1', kWh: 20, costRm: 18, nearestCostRm: 26, minutesVsNearest: 8, overstayMin: 0,
   });
   assert.equal(buildSession({ ranking, chosenId: 'c', at: 1, anonNo: 3, resident: true }).choice, 'pick3');
   assert.equal(buildSession({ ranking, chosenId: 'c', at: 1, anonNo: 3, resident: true }).anonId, 'R3');

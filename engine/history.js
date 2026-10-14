@@ -59,10 +59,11 @@ export function simulateHistory(condo, charger, endMs, { seed = seedOf(condo.id)
       const saved = follow ? round2(between(rand(), EFFECT[mode].rm)) : 0;
       const minutes = follow ? Math.round(between(rand(), EFFECT[mode].min)) : 0;
       const idNo = 1 + Math.floor(rand() * (visitor ? 60 : residentIds));
+      const overstayMin = visitor && rand() < 0.2 ? 5 + Math.floor(rand() * 41) : 0; // some visitors come back late
       out.push({
         at: at.getTime(), anonId: `${visitor ? 'V' : 'R'}${idNo}`, role: visitor ? 'visitor' : 'resident',
         mode, chargerId: charger.id, condoId: condo.id, topPickId: null, nearestId: null,
-        choice, kWh, costRm, nearestCostRm: round2(costRm + saved), minutesVsNearest: minutes, simulated: true,
+        choice, kWh, costRm, nearestCostRm: round2(costRm + saved), minutesVsNearest: minutes, overstayMin, simulated: true,
       });
     }
   }

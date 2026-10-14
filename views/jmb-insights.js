@@ -1,7 +1,8 @@
 // JMB cards: did drivers follow CasCas's picks (anonymous), and which visitors are expected (plates).
 import { MODES } from '../engine/score.js';
 import { simulateHistory } from '../engine/history.js';
-import { filterSessions, followRate, savings, weeklyTrend, byMode, toCsv, CHOICE_LABEL, anonLabel } from '../engine/insights.js';
+import { filterSessions, followRate, savings, weeklyTrend, byMode, toCsv, CHOICE_LABEL, anonLabel, overstayTotals } from '../engine/insights.js';
+import { overstayFee } from '../engine/pricing.js';
 import { upcomingPasses, formatPlate } from '../engine/access.js';
 import { lineChart } from './charts.js';
 import { esc, rm, rm0, num, pct, fmtTime, fmtDay, fmtClock } from './format.js';
@@ -24,6 +25,7 @@ export function insightsSection(condo, charger, ctx) {
   const monthStart = new Date(ctx.clock.getFullYear(), ctx.clock.getMonth(), 1).getTime();
   const month = filterSessions(all, { from: monthStart, to: now + 1 });
   const s30 = savings(recent);
+  const late = overstayTotals(recent);
   const trend = weeklyTrend(all, now, 12);
   const from = filters.from ? dayStart(filters.from) : null;
   const toDay = filters.to ? dayStart(filters.to) : null;
@@ -52,6 +54,7 @@ export function insightsSection(condo, charger, ctx) {
             <tbody>${byMode(recent).map((g) => `<tr><td>${MODES[g.key].label}</td><td>${num(g.count)}</td><td>${g.count ? pct(g.followRate) : '—'}</td></tr>`).join('')}</tbody>
           </table></div>
           <p class="muted">Average time vs the nearest charger: ${s30.avgMinutes > 0 ? '+' : ''}${s30.avgMinutes} min. Saver drivers accept a short detour for a lower price.</p>
+          <p class="muted">Overstay fees (30 days): <b>${rm0(late.feesRm)}</b> from ${num(late.count)} late pick-ups, paid to the JMB. Drivers get a reminder 15 minutes before their slot ends.</p>
         </div>
       </div>
       <h4>Session log</h4>
@@ -62,8 +65,8 @@ export function insightsSection(condo, charger, ctx) {
         <button id="j-csv" class="btn small" type="button">Export CSV (${num(rows.length)})</button>
       </form>
       <div class="tbl"><table>
-        <thead><tr><th>Time</th><th>Driver</th><th>Mode</th><th>kWh</th><th>Cost</th><th>Choice</th><th>Saved vs nearest</th></tr></thead>
-        <tbody>${rows.slice(0, 50).map((r) => `<tr><td>${esc(fmtDay(new Date(r.at)))} ${esc(fmtClock(new Date(r.at)))}</td><td>${esc(anonLabel(r.anonId))}</td><td>${MODES[r.mode].label}</td><td>${r.kWh.toFixed(1)}</td><td>${rm(r.costRm)}</td><td>${CHOICE_LABEL[r.choice]}</td><td>${signedRm(r.nearestCostRm - r.costRm)}</td></tr>`).join('') || '<tr><td colspan="7">No sessions match these filters.</td></tr>'}</tbody>
+        <thead><tr><th>Time</th><th>Driver</th><th>Mode</th><th>kWh</th><th>Cost</th><th>Choice</th><th>Saved vs nearest</th><th>Overstay</th></tr></thead>
+        <tbody>${rows.slice(0, 50).map((r) => `<tr><td>${esc(fmtDay(new Date(r.at)))} ${esc(fmtClock(new Date(r.at)))}</td><td>${esc(anonLabel(r.anonId))}</td><td>${MODES[r.mode].label}</td><td>${r.kWh.toFixed(1)}</td><td>${rm(r.costRm)}</td><td>${CHOICE_LABEL[r.choice]}</td><td>${signedRm(r.nearestCostRm - r.costRm)}</td><td>${r.overstayMin ? `${r.overstayMin} min · ${rm(overstayFee(r.overstayMin))}` : '—'}</td></tr>`).join('') || '<tr><td colspan="8">No sessions match these filters.</td></tr>'}</tbody>
       </table></div>
       <p class="muted">Drivers appear by anonymous ID only. No names, phone numbers or plates are kept in this log.</p>
     </section>`;

@@ -166,10 +166,20 @@ function stageHtml(ctx, r) {
         <div><dt>Time</dt><dd>${formatDuration(s.minutes)}</dd></div>
       </dl>
       <p class="muted">Demo speed: 1 second = 1 minute of charging.</p>
+      <section class="while" aria-label="While you charge">
+        <h3>While you charge</h3>
+        <ul>
+          ${p.walk ? `<li>${esc(p.walk)}. Go ahead, the car charges while you are there.</li>` : ''}
+          <li>We notify you when the charge is complete, and 15 minutes before your slot ends.</li>
+          <li>Your slot ends at <b>${esc(fmtClock(new Date(p.slotEnd)))}</b>. After that, an overstay fee of ${rm(CONST.overstayRmPer10Min)} per 10 min applies, so the next driver can charge.</li>
+          <li>You can stop charging from your phone at any time.</li>
+        </ul>
+      </section>
       <button class="btn" type="button" data-act="stop">Stop charging</button>`;
   }
   const s = p.session;
-  return `<h2>How did it go?</h2>
+  return `<p class="notice-line"><b>Notification:</b> ${s.kWh >= p.kWhTarget - 0.01 ? 'charging complete' : 'charging stopped'}. Please move your car by ${esc(fmtClock(new Date(p.slotEnd)))} to avoid the overstay fee.</p>
+    <h2>How did it go?</h2>
     <p>${s.kWh.toFixed(1)} kWh for <b>${rm(s.kWh * p.price)}</b> at ${esc(p.name)}.</p>
     <label class="field">Note (optional) <input id="d-note" type="text" maxlength="120" placeholder="e.g. cable damaged on bay 3"></label>
     <div class="btn-row"><button class="btn primary" type="button" data-act="ok">It worked</button>
@@ -234,7 +244,7 @@ function confirmVisitor(root, ctx, ranking, car, form) {
   if (!canAutoApprove(c.condo, c.arrival)) { back(`${c.condo.name} is not sharing at that time. Pick another charger.`); return; }
   const pass = createPass({
     id: `pass-${ctx.clock.getTime()}-${c.charger.id}`, condoId: c.condo.id, chargerId: c.charger.id, plate,
-    slotStart: c.arrival.getTime(), minutes: CONST.holdMinutes + c.chargeMin, now: ctx.clock.getTime(),
+    slotStart: c.arrival.getTime(), minutes: CONST.holdMinutes + c.stopChargeMin, now: ctx.clock.getTime(),
   });
   ui.pending = null;
   book(ctx, ranking, c, car, pass);
@@ -253,6 +263,8 @@ function book(ctx, ranking, c, car, pass) {
     chargerId: c.charger.id, name: c.charger.name, price: c.price, kWhTarget: c.deliveredKwh, power,
     batteryKwh: car.batteryKwh, startPct: ui.battery, bookedAt: ctx.clock.getTime(),
     session: { kWh: 0, minutes: 0 }, pass,
+    slotEnd: pass ? pass.slotEnd : c.arrival.getTime() + Math.max(60, Math.ceil((CONST.holdMinutes + c.stopChargeMin) / 30) * 30) * 60000,
+    walk: c.reasons.find((x) => x.includes('min walk to')) || null,
     saving: session.nearestCostRm - session.costRm, minutesVsNearest: session.minutesVsNearest,
   };
   ui.stage = 'booked';
