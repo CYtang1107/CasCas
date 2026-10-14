@@ -185,3 +185,8 @@ td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
 .source { margin: 0; font-size: 0.78rem; color: var(--muted); }
 .source a { color: inherit; }
 .loading { padding: 32px 16px; color: var(--muted); }
+.more { margin-top: 12px; }
+.more ul { list-style: none; padding: 0; margin: 8px 0 0; display: grid; gap: 6px; }
+.more li { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.approved { background: var(--surface); border: 1px solid var(--accent); border-radius: var(--radius); padding: 10px 12px; }
+.saved { font-weight: 600; }

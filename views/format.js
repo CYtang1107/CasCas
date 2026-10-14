@@ -6,3 +6,5 @@ export const num = (n) => Math.round(n).toLocaleString('en-MY');
 export const pct = (x) => `${Math.round(x * 100)}%`;
 export const fmtTime = (d) => d.toLocaleString('en-MY', { weekday: 'short', hour: 'numeric', minute: '2-digit' });
 export const monthLabel = (d) => d.toLocaleString('en-MY', { month: 'short' });
+export const fmtDay = (d) => d.toLocaleDateString('en-MY', { day: 'numeric', month: 'short' });
+export const fmtClock = (d) => d.toLocaleTimeString('en-MY', { hour: 'numeric', minute: '2-digit' });

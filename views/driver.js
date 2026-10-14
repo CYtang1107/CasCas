@@ -5,10 +5,13 @@ import { rankChargers, MODES, formatDuration } from '../engine/score.js';
 import { priceAt } from '../engine/pricing.js';
 import { isOpenToVisitors } from '../engine/sharing.js';
 import { occupancyAt } from '../engine/occupancy.js';
-import { esc, rm, fmtTime } from './format.js';
+import { buildSession } from '../engine/insights.js';
+import { normalisePlate, isValidPlate, formatPlate, canAutoApprove, createPass } from '../engine/access.js';
+import { addSession, anonNumber } from '../state.js';
+import { esc, rm, fmtTime, fmtClock } from './format.js';
 
 const NEED = [['now', 'Now'], ['2h', 'Within 2 h'], ['overnight', 'Overnight']];
-const fresh = () => ({ carId: 'emas7', battery: 35, placeId: 'klem', homeId: '', needBy: 'now', stage: 'pick', pick: null, flash: '' });
+const fresh = () => ({ carId: 'emas7', battery: 35, placeId: 'klem', homeId: '', needBy: 'now', stage: 'pick', pick: null, flash: '', pending: null, plate: '' });
 let ui = fresh();
 let map = null;
 let layer = null;
@@ -83,7 +86,7 @@ function update(root, ctx) {
   root.querySelector('#d-batt-out').textContent = `${ui.battery}%`;
   drawMarkers(ctx, origin, ranking);
   const box = root.querySelector('#d-results');
-  box.innerHTML = ui.stage === 'pick' ? pickHtml(ranking, ctx) : stageHtml(ctx);
+  box.innerHTML = ui.stage === 'pick' ? pickHtml(ranking, ctx) : stageHtml(ctx, ranking);
   bind(root, ctx, ranking, car);
 }
 
@@ -116,14 +119,35 @@ function pickHtml(r, ctx) {
   const off = r.excluded.length
     ? `<details class="excluded"><summary>${r.excluded.length} chargers not suitable right now</summary><ul>${r.excluded.map((x) => `<li>${esc(x.charger.name)}: ${esc(x.reason)}</li>`).join('')}</ul></details>`
     : '';
-  return head + note + cards + off;
+  const rest = r.results.slice(3);
+  const more = rest.length
+    ? `<details class="more"><summary>Choose another charger (${rest.length})</summary><ul>${rest.map((c) => `<li><span>${esc(c.charger.name)} · ${rm(c.price)}/kWh · ${c.km.toFixed(1)} km</span> <button class="btn small" type="button" data-book="${c.charger.id}">Book</button></li>`).join('')}</ul></details>`
+    : '';
+  return head + note + cards + more + off;
 }
 
-function stageHtml(ctx) {
+function stageHtml(ctx, r) {
   const p = ui.pick;
+  if (ui.stage === 'plate') {
+    const c = r.results.find((x) => x.charger.id === ui.pending);
+    return `<h2>Visitor details</h2>
+      <p><b>${esc(c ? c.charger.name : 'This bay')}</b> is a shared condo bay. The condo's management lets visitors in by number plate.</p>
+      <form id="d-plate-form" class="form" novalidate>
+        <label class="field">Number plate <input id="d-plate" type="text" autocomplete="off" autocapitalize="characters" maxlength="12" placeholder="e.g. WXY 1234" value="${esc(ui.plate)}"></label>
+        <label class="check"><input type="checkbox" id="d-consent"> My plate is shared with the condo management only to let me in.</label>
+        <p id="d-plate-err" class="error" role="alert" hidden></p>
+        <div class="btn-row"><button class="btn primary" type="submit">Confirm booking</button>
+        <button class="btn" type="button" data-act="back">Back</button></div>
+      </form>`;
+  }
   if (ui.stage === 'booked') {
     const until = new Date(p.bookedAt + CONST.holdMinutes * 60000);
+    const pass = p.pass
+      ? `<p class="approved"><b>Approved.</b> Show plate <b>${esc(formatPlate(p.pass.plate))}</b> at the guardhouse, ${esc(fmtTime(new Date(p.pass.slotStart)))} to ${esc(fmtClock(new Date(p.pass.slotEnd)))}.</p>`
+      : '';
     return `<h2>Bay held</h2>
+      ${pass}
+      <p class="saved">${esc(savingLine(p))}</p>
       <p><b>${esc(p.name)}</b> is held for you for ${CONST.holdMinutes} minutes, until ${esc(fmtTime(until))}.</p>
       ${qrSvg(p.chargerId)}
       <p class="muted">At the bay, scan the QR code on the charger to start.</p>
@@ -153,25 +177,35 @@ function stageHtml(ctx) {
     <p class="muted">Your check-in updates this charger's reliability for every driver.</p>`;
 }
 
+function savingLine(p) {
+  if (p.saving >= 0.01) return `You saved ${rm(p.saving)} vs the nearest charger.`;
+  if (p.minutesVsNearest < 0) return `${formatDuration(-p.minutesVsNearest)} faster than the nearest charger.`;
+  return 'Same as the nearest charger.';
+}
+
 function bind(root, ctx, ranking, car) {
   const box = root.querySelector('#d-results');
   box.querySelectorAll('[data-book]').forEach((btn) => btn.addEventListener('click', () => {
     const c = ranking.results.find((x) => x.charger.id === btn.dataset.book);
-    const power = c.charger.type === 'DC' ? Math.min(c.charger.kw, car.dcKw) : Math.min(c.charger.kw, car.acKw);
-    ui.pick = {
-      chargerId: c.charger.id, name: c.charger.name, price: c.price, kWhTarget: c.kWh, power,
-      batteryKwh: car.batteryKwh, startPct: ui.battery, bookedAt: ctx.clock.getTime(),
-      session: { kWh: 0, minutes: 0 },
-    };
-    ui.stage = 'booked';
+    if (!c) return;
     ui.flash = '';
-    ctx.state.booking = { chargerId: c.charger.id, at: ctx.clock.getTime() };
-    ctx.save();
+    if (c.isSharedVisit) { ui.stage = 'plate'; ui.pending = c.charger.id; update(root, ctx); return; }
+    book(ctx, ranking, c, car, null);
     update(root, ctx);
   }));
+  const form = box.querySelector('#d-plate-form');
+  if (form) {
+    const input = form.querySelector('#d-plate');
+    input.addEventListener('input', () => { ui.plate = input.value; });
+    form.addEventListener('submit', (e) => { e.preventDefault(); confirmVisitor(root, ctx, ranking, car, form); });
+  }
   const act = (name, fn) => { const b = box.querySelector(`[data-act="${name}"]`); if (b) b.addEventListener('click', fn); };
+  act('back', () => { ui.stage = 'pick'; ui.pending = null; update(root, ctx); });
   act('start', () => { ui.stage = 'charging'; update(root, ctx); startTimer(root, ctx); });
-  act('cancel', () => { ui.stage = 'pick'; ui.pick = null; ctx.state.booking = null; ctx.save(); update(root, ctx); });
+  act('cancel', () => {
+    if (ui.pick?.pass) ctx.state.visitorPasses = ctx.state.visitorPasses.filter((x) => x.id !== ui.pick.pass.id);
+    ui.stage = 'pick'; ui.pick = null; ctx.state.booking = null; ctx.save(); update(root, ctx);
+  });
   act('stop', () => { stopTimer(); ui.stage = 'done'; update(root, ctx); });
   const checkin = (ok) => {
     const note = (box.querySelector('#d-note')?.value || '').trim();
@@ -186,6 +220,44 @@ function bind(root, ctx, ranking, car) {
   };
   act('ok', () => checkin(true));
   act('problem', () => checkin(false));
+}
+
+function confirmVisitor(root, ctx, ranking, car, form) {
+  const err = form.querySelector('#d-plate-err');
+  const fail = (msg) => { err.textContent = msg; err.hidden = false; };
+  const back = (msg) => { ui.stage = 'pick'; ui.pending = null; ui.flash = msg; update(root, ctx); };
+  const c = ranking.results.find((x) => x.charger.id === ui.pending);
+  if (!c) { back('That bay is no longer free. Pick another charger.'); return; }
+  const plate = normalisePlate(ui.plate);
+  if (!isValidPlate(plate)) { fail('Enter a number plate with letters and numbers, for example WXY 1234.'); return; }
+  if (!form.querySelector('#d-consent').checked) { fail('Tick the box to share your plate with the condo management.'); return; }
+  if (!canAutoApprove(c.condo, c.arrival)) { back(`${c.condo.name} is not sharing at that time. Pick another charger.`); return; }
+  const pass = createPass({
+    id: `pass-${ctx.clock.getTime()}-${c.charger.id}`, condoId: c.condo.id, chargerId: c.charger.id, plate,
+    slotStart: c.arrival.getTime(), minutes: CONST.holdMinutes + c.chargeMin, now: ctx.clock.getTime(),
+  });
+  ui.pending = null;
+  book(ctx, ranking, c, car, pass);
+  update(root, ctx);
+}
+
+// Hold the bay, record the session (anonymous) and, for visitors, the plate pass.
+function book(ctx, ranking, c, car, pass) {
+  const power = c.charger.type === 'DC' ? Math.min(c.charger.kw, car.dcKw) : Math.min(c.charger.kw, car.acKw);
+  const session = buildSession({
+    ranking, chosenId: c.charger.id, at: ctx.clock.getTime(), anonNo: anonNumber(ctx.state), resident: !!ui.homeId,
+  });
+  addSession(ctx.state, session);
+  if (pass) ctx.state.visitorPasses = [...ctx.state.visitorPasses, pass];
+  ui.pick = {
+    chargerId: c.charger.id, name: c.charger.name, price: c.price, kWhTarget: c.kWh, power,
+    batteryKwh: car.batteryKwh, startPct: ui.battery, bookedAt: ctx.clock.getTime(),
+    session: { kWh: 0, minutes: 0 }, pass,
+    saving: session.nearestCostRm - session.costRm, minutesVsNearest: session.minutesVsNearest,
+  };
+  ui.stage = 'booked';
+  ctx.state.booking = { chargerId: c.charger.id, at: ctx.clock.getTime() };
+  ctx.save();
 }
 
 function startTimer(root, ctx) {

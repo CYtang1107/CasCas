@@ -2,7 +2,7 @@ import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { loadState, saveState, resetState, addSession, anonNumber, MAX_SESSIONS } from '../state.js';
 import { buildWorld } from '../engine/world.js';
-import { esc, rm, rm0, pct } from '../views/format.js';
+import { esc, rm, rm0, pct, fmtDay } from '../views/format.js';
 import { barChart24, lineChart } from '../views/charts.js';
 
 const setStorage = (value) => Object.defineProperty(globalThis, 'localStorage', { value, configurable: true, writable: true });
@@ -50,6 +50,7 @@ test('format helpers', () => {
   assert.equal(rm(1.1), 'RM1.10');
   assert.equal(rm0(3528.4), 'RM3,528');
   assert.equal(pct(0.294), '29%');
+  assert.equal(fmtDay(new Date(2026, 9, 21)), new Date(2026, 9, 21).toLocaleDateString('en-MY', { day: 'numeric', month: 'short' }));
 });
 
 test('charts render one bar pair per hour and one path per series', () => {
