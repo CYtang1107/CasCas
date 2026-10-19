@@ -160,3 +160,15 @@ test('JMB maintenance log: PIN only, validated, and fault bays leave service for
   assert.equal((await s.call('POST', '/api/jmb/lumina/maintenance', { entry: fault }, serini)).status, 401);
   await s.close();
 });
+
+test('the JMB portal has its own page; the driver app no longer has a JMB tab', async () => {
+  const s = await start();
+  const portal = await s.raw('GET', '/jmb.html');
+  assert.equal(portal.status, 200);
+  const html = await portal.text();
+  assert.ok(html.includes('data-app="jmb"'));
+  const app = await (await s.raw('GET', '/')).text();
+  assert.ok(!app.includes('data-role="jmb"'));
+  assert.ok(app.includes('data-role="activity"'));
+  await s.close();
+});

@@ -361,4 +361,23 @@ a.pick.hero { text-decoration: none; color: var(--fg); }
   main { padding-top: 12px; }
   .ask { flex-direction: row; align-items: stretch; }
 }
+/* JMB portal (jmb.html): desktop-first, sidebar of sections */
+.portal-tag { font: 600 0.7rem/1 var(--mono); text-transform: uppercase; letter-spacing: 0.06em; background: var(--amber-soft); color: var(--amber); padding: 4px 7px; border-radius: 6px; vertical-align: 3px; }
+.portal-page main { max-width: 1440px; }
+.portal { display: grid; grid-template-columns: 190px minmax(0, 1fr); gap: 24px; align-items: start; }
+.side { position: sticky; top: 92px; display: grid; gap: 4px; }
+.side button { text-align: left; font: 600 0.9rem/1.2 var(--body); color: var(--muted); background: none; border: 0; border-radius: 8px; padding: 10px 12px; cursor: pointer; min-height: 40px; }
+.side button:hover { background: var(--surface); color: var(--fg); }
+.portal [id^="j-s-"] { scroll-margin-top: 92px; }
+.switch { white-space: nowrap; }
+@media (max-width: 1000px) {
+  .portal { grid-template-columns: minmax(0, 1fr); }
+  .side { position: static; display: flex; gap: 6px; overflow-x: auto; padding-bottom: 4px; }
+  .side button { white-space: nowrap; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); }
+}
+@media (max-width: 760px) {
+  .portal-page { padding-bottom: 0; }
+  .portal-page .foot { display: flex; }
+  .portal-page .brand small { display: none; }
+}
 [hidden] { display: none !important; } /* the hidden attribute must win over display rules like .detail { display: grid } */

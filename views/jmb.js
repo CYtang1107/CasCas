@@ -15,6 +15,8 @@ const PEAK_HOURS = Array.from({ length: TNB.peakEndHour - TNB.peakStartHour }, (
 
 export function renderJmb(root, ctx) {
   const { condos, chargers } = ctx.world;
+  const fromUrl = location.hash.slice(1);
+  if (condos.some((c) => c.id === fromUrl)) condoId = fromUrl;
   if (!condos.some((c) => c.id === condoId)) condoId = condos[0].id;
   const condo = condos.find((c) => c.id === condoId);
   const charger = chargers.find((ch) => ch.condoId === condo.id);
@@ -32,7 +34,10 @@ export function renderJmb(root, ctx) {
   const problems = checkins.filter((c) => !c.ok);
 
   const bays = entries ? bayStatus(entries, condo.bays) : null;
+  const SECTIONS = [['j-s-overview', 'Overview'], ['j-s-sharing', 'Sharing'], ['j-s-money', 'Cost recovery'], ['j-s-live', 'Live chargers'], ['j-s-health', 'Charger health'], ['j-s-private', 'Visitors & drivers']];
   root.innerHTML = `
+  <div class="portal">
+  <nav class="side" aria-label="Dashboard sections">${SECTIONS.map(([id, l]) => `<button type="button" data-jump="${id}">${l}</button>`).join('')}</nav>
   <div class="jmb">
     <div class="view-head">
       <div><p class="eyebrow">JMB dashboard · ${esc(start.toLocaleString('en-MY', { month: 'long', year: 'numeric' }))}</p>
@@ -41,7 +46,7 @@ export function renderJmb(root, ctx) {
       <label class="field inline">Condo <select id="j-condo">${condos.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select></label>
     </div>
 
-    <div class="kpis">
+    <div class="kpis" id="j-s-overview">
       <div class="kpi"><span>Charging income this month</span><b>${rm0(sim.revenue)}</b></div>
       <div class="kpi"><span>JMB share after all costs</span><b>${rm0(sim.jmbIncome)}</b></div>
       <div class="kpi hero"><span>Saving per unit per month</span><b>${rm(sim.perUnitSaving)}</b></div>
@@ -71,7 +76,7 @@ export function renderJmb(root, ctx) {
         <p class="muted">Hardware payback on ${condo.bays} bays at ${rm0(CONST.hardwarePerBay)} each: ${sim.paybackMonths ? `${sim.paybackMonths} months` : 'not reached at these prices'}. CO₂ avoided: ${num(sim.co2AvoidedKg)} kg this month.</p>
         <button id="j-report" class="btn small" type="button">Download monthly report (CSV)</button>
       </section>
-      <section class="card"><h3>Sharing with outside drivers</h3>
+      <section class="card" id="j-s-sharing"><h3>Sharing with outside drivers</h3>
         ${priv.canEdit ? '' : '<p class="muted">Log in with the condo PIN below to change these settings.</p>'}
         <form id="j-share" class="form" novalidate><fieldset class="plain" ${priv.canEdit ? '' : 'disabled'}>
           <label class="check"><input type="checkbox" id="j-en" ${s.enabled ? 'checked' : ''}> Open idle bays to outside drivers</label>
@@ -91,14 +96,14 @@ export function renderJmb(root, ctx) {
       </section>
     </div>
 
-    <div class="grid2">
+    <div class="grid2" id="j-s-money">
       ${recoveryHtml(condo, sim)}
       ${maintenanceHtml(condo, entries, priv.canEdit, ctx.clock)}
     </div>
 
-    ${liveHtml(condo, ctx)}
+    <div id="j-s-live">${liveHtml(condo, ctx)}</div>
 
-    <section class="card"><h3>Charger health</h3>
+    <section class="card" id="j-s-health"><h3>Charger health</h3>
       <p class="muted">Reliability ${pct(charger.reliability)} · ${checkins.length} check-ins ${ctx.api ? 'shared by all drivers' : 'from drivers on this device'}.</p>
       <div class="tbl"><table>
         <thead><tr><th>Bay</th><th>Status</th><th>Latest report</th></tr></thead>
@@ -110,13 +115,15 @@ export function renderJmb(root, ctx) {
         }).join('')}</tbody>
       </table></div>
     </section>
-    ${priv.html}
+    <div id="j-s-private">${priv.html}</div>
+  </div>
   </div>`;
 
   const $ = (sel) => root.querySelector(sel);
   $('#j-condo').value = condo.id;
   $('#j-days').value = s.days;
-  $('#j-condo').addEventListener('change', (e) => { condoId = e.target.value; ctx.rerender(); });
+  $('#j-condo').addEventListener('change', (e) => { condoId = e.target.value; history.replaceState(null, '', `#${condoId}`); ctx.rerender(); });
+  root.querySelectorAll('[data-jump]').forEach((b) => b.addEventListener('click', () => document.getElementById(b.dataset.jump)?.scrollIntoView({ block: 'start' })));
   $('#j-share').addEventListener('submit', (e) => e.preventDefault());
   $('#j-share').addEventListener('change', async () => {
     const next = {

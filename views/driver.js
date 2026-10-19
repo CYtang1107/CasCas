@@ -216,7 +216,7 @@ function activityHtml(ctx, r) {
     </section>
     <section class="about"><h3>About this demo</h3>
       <p class="muted">${esc(source)}${mode ? ` · ${esc(mode)}` : ''}. Condo bays, occupancy and history are simulated; condo names are fictional.</p>
-      <button class="btn" type="button" data-reset>Reset demo</button></section>`;
+      <div class="btn-row"><button class="btn" type="button" data-reset>Reset demo</button><a class="btn" href="jmb.html">Manage a condo? JMB portal</a></div></section>`;
 }
 
 function compute(ctx) {

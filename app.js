@@ -11,7 +11,9 @@ import { renderDriver, resetDriver } from './views/driver.js';
 import { renderJmb } from './views/jmb.js';
 
 const tabView = (name) => (root, ctx) => renderDriver(root, ctx, name);
-const VIEWS = { home: tabView('home'), map: tabView('map'), plan: tabView('plan'), activity: tabView('activity'), jmb: renderJmb };
+// Two front doors: index.html is the driver app, jmb.html the JMB portal (body data-app="jmb").
+const PORTAL = document.body.dataset.app === 'jmb';
+const VIEWS = PORTAL ? { jmb: renderJmb } : { home: tabView('home'), map: tabView('map'), plan: tabView('plan'), activity: tabView('activity') };
 let state = loadState();
 state.visitorPasses = purgePasses(state.visitorPasses, Date.now());
 saveState(state);
@@ -31,7 +33,9 @@ function localFaultBays() {
 }
 
 function currentRole() {
+  if (PORTAL) return 'jmb';
   const id = location.hash.slice(1);
+  if (id === 'jmb') { location.replace('jmb.html'); return 'home'; } // old #jmb links go to the portal
   return VIEWS[id] ? id : 'home'; // old #driver links land on Home
 }
 
@@ -84,9 +88,10 @@ function toLocalInput(d) {
 }
 
 function initChrome() {
-  document.title = `${APP.name} · ${APP.township}`;
+  document.title = PORTAL ? `${APP.name} JMB portal · ${APP.township}` : `${APP.name} · ${APP.township}`;
   document.querySelectorAll('[data-app-name]').forEach((el) => { el.textContent = APP.name; });
-  document.querySelector('[data-tagline]').textContent = APP.tagline;
+  const tagline = document.querySelector('[data-tagline]');
+  if (tagline) tagline.textContent = APP.tagline;
 
   const preset = document.getElementById('clock-preset');
   const custom = document.getElementById('clock-custom');

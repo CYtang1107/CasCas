@@ -16,7 +16,7 @@ import { createAuth } from './auth.js';
 import { cleanSession, cleanBooking, cleanCheckin, cleanSharing } from './validate.js';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
-const FILES = ['index.html', 'app.js', 'config.js', 'state.js', 'styles.css'];
+const FILES = ['index.html', 'jmb.html', 'app.js', 'config.js', 'state.js', 'styles.css'];
 const DIRS = ['data', 'engine', 'views'];
 const MAX_SESSIONS = 5000;
 const MAX_MAINTENANCE = 500;
