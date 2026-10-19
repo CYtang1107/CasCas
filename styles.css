@@ -216,4 +216,28 @@ fieldset.plain { border: 0; padding: 0; margin: 0; min-width: 0; display: conten
 fieldset.plain:disabled { opacity: 0.6; }
 .jmb-auth { display: flex; align-items: center; gap: 12px; margin-top: 16px; }
 .jmb-login { margin-top: 16px; }
+
+/* Ask CasCas, preferences, smart schedule, price comparison */
+.ask { display: flex; gap: 10px; align-items: flex-end; margin-bottom: 12px; }
+.ask .grow { flex: 1; min-width: 0; }
+.ask-note { background: var(--accent-soft); border-radius: 8px; padding: 8px 12px; font-size: 0.88rem; margin: 0 0 12px; }
+.prefs { margin-top: 10px; }
+.prefs summary, .compare summary { cursor: pointer; color: var(--muted); font-size: 0.9rem; }
+.prefs .fields { margin-top: 10px; }
+.timing { background: var(--accent-soft); border-radius: 8px; padding: 10px 12px; font-size: 0.9rem; }
+.compare { margin: 12px 0; }
+.compare .tbl { margin-top: 8px; }
+
+/* JMB operations */
+.recovery tr.total td { border-top: 2px solid var(--fg); font-weight: 700; }
+.recovery tr.hero-row td { color: var(--accent); font-weight: 700; }
+.recovery td:last-child { text-align: right; font-variant-numeric: tabular-nums; }
+.quiet { background: var(--amber-soft); border-radius: 8px; padding: 8px 12px; font-size: 0.88rem; }
+.maintenance .row { grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); align-items: end; margin-bottom: 10px; }
+.maintenance .row .grow { grid-column: span 2; }
+#j-report { margin-top: 8px; }
+@media (max-width: 560px) {
+  .ask { flex-direction: column; align-items: stretch; }
+  .maintenance .row .grow { grid-column: auto; }
+}
 [hidden] { display: none !important; } /* the hidden attribute must win over display rules like .detail { display: grid } */

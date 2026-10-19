@@ -2,6 +2,7 @@
 // condo's sessions and visitor plates from the server. Plates are never shown without the PIN.
 import { insightsSection, visitorsHtml } from './jmb-insights.js';
 import { filterSessions } from '../engine/insights.js';
+import { cleanEntry } from '../engine/maintenance.js';
 import { esc, rm, pct, num } from './format.js';
 
 const STALE_MS = 10000;
@@ -27,7 +28,14 @@ const entryFor = (id) => { if (!cache.has(id)) cache.set(id, {}); return cache.g
 export function privateSection(condo, charger, ctx) {
   if (!ctx.api) {
     const ins = insightsSection(condo, charger, ctx, filterSessions(ctx.state.sessions, { condoId: condo.id }));
-    return { canEdit: true, html: visitorsHtml(condo, ctx, ctx.state.visitorPasses) + ins.html, bind: ins.bind, save: null };
+    const addMaintenance = (entry) => {
+      ctx.state.maintenance[condo.id] = [...(ctx.state.maintenance[condo.id] || []), cleanEntry(entry)];
+      ctx.save();
+      ctx.rerender();
+      return { ok: true };
+    };
+    return { canEdit: true, html: visitorsHtml(condo, ctx, ctx.state.visitorPasses) + ins.html, bind: ins.bind, save: null,
+      maintenance: ctx.state.maintenance[condo.id] || [], addMaintenance, sessions: filterSessions(ctx.state.sessions, { condoId: condo.id }) };
   }
   const e = entryFor(condo.id);
   const token = getToken(condo.id);
@@ -67,7 +75,7 @@ function loginCard(condo, ctx, e) {
       ctx.rerender();
     });
   };
-  return { canEdit: false, html, bind, save: null };
+  return { canEdit: false, html, bind, save: null, maintenance: null, addMaintenance: null };
 }
 
 function loggedIn(condo, charger, ctx, e, token) {
@@ -81,7 +89,7 @@ function loggedIn(condo, charger, ctx, e, token) {
     });
   }
   if (!e.data) {
-    return { canEdit: false, html: `<section class="card"><p class="loading">${esc(e.error || 'Loading JMB data…')}</p></section>`, bind: () => {}, save: null };
+    return { canEdit: false, html: `<section class="card"><p class="loading">${esc(e.error || 'Loading JMB data…')}</p></section>`, bind: () => {}, save: null, maintenance: null, addMaintenance: null };
   }
   const ins = insightsSection(condo, charger, ctx, e.data.sessions);
   const html = `
@@ -91,6 +99,13 @@ function loggedIn(condo, charger, ctx, e, token) {
     ${ins.html}`;
   return {
     canEdit: true,
+    maintenance: e.data.maintenance || [],
+    sessions: e.data.sessions,
+    addMaintenance: async (entry) => {
+      const r = await ctx.api.addMaintenance(condo.id, token, entry);
+      if (r.ok) { cache.delete(condo.id); await ctx.refresh(); }
+      return r;
+    },
     html,
     bind: (root) => {
       ins.bind(root);

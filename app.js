@@ -6,6 +6,7 @@ import { createApi, detectServer } from './data/api.js';
 import { loadState, saveState, resetState } from './state.js';
 import { buildWorld } from './engine/world.js';
 import { purgePasses } from './engine/access.js';
+import { faultBays } from './engine/maintenance.js';
 import { renderDriver, resetDriver } from './views/driver.js';
 import { renderJmb } from './views/jmb.js';
 
@@ -16,7 +17,17 @@ saveState(state);
 let clock = CLOCK_PRESETS[0].date();
 let chargers = null; // set once chargers are loaded
 let api = null; // set in shared mode (a CasCas server answered)
-let shared = { sharing: {}, checkins: {}, activeBays: {} };
+let shared = { sharing: {}, checkins: {}, activeBays: {}, faultBays: {} };
+
+// Bays the JMB logged as faulty (and not yet repaired) count as taken for drivers.
+function localFaultBays() {
+  const out = {};
+  for (const c of CONDOS) {
+    const n = faultBays(state.maintenance[c.id] || [], c.bays);
+    if (n) out[`cs-${c.id}`] = n;
+  }
+  return out;
+}
 
 function currentRole() {
   const id = location.hash.slice(1);
@@ -33,7 +44,12 @@ function render() {
   if (!chargers) { view.innerHTML = '<p class="loading">Loading chargers…</p>'; return; }
   // Shared mode: sharing settings, check-ins and booked bays come from the server.
   const worldState = api ? { ...state, sharing: shared.sharing, checkins: shared.checkins } : state;
-  const list = api ? chargers.map((ch) => ({ ...ch, bookedBays: shared.activeBays[ch.id] || 0 })) : chargers;
+  const faults = api ? shared.faultBays || {} : localFaultBays();
+  const list = chargers.map((ch) => {
+    const fault = faults[ch.id] || 0;
+    const booked = api ? shared.activeBays[ch.id] || 0 : 0;
+    return fault || booked ? { ...ch, bookedBays: booked + fault, faultBays: fault } : ch;
+  });
   const ctx = { state, clock, api, checkins: worldState.checkins, world: buildWorld(worldState, CONDOS, list), save: () => saveState(state), rerender: render, refresh };
   VIEWS[role](view, ctx);
 }

@@ -18,6 +18,8 @@ export const FAULTY = 0.6;
 // MIN_USEFUL_KWH in the stop is dropped (this keeps slow condo AC bays away from quick stops).
 export const PARK = { '30m': { min: 30, label: '30 min' }, '2h': { min: 120, label: '2 h' }, '4h': { min: 240, label: '4 h' }, overnight: { min: 720, label: 'overnight' } };
 const MIN_USEFUL_KWH = 5;
+// A driver's preferred operator moves up, but never past a clearly better charger.
+const PREFERRED_BONUS = 0.08;
 
 export function modeFor(batteryPct) {
   if (batteryPct <= 15) return 'urgent';
@@ -48,8 +50,10 @@ export function formatDuration(min) {
 
 export function rankChargers({
   chargers, condos = [], car, batteryPct, origin, destination = null, date,
-  residentCondoId = null, parkFor = '30m', occupancyFn = occupancyAt,
+  residentCondoId = null, parkFor = '30m', occupancyFn = occupancyAt, prefs = {},
 }) {
+  const { maxPrice = null, fastOnly = false, operator = null } = prefs || {};
+  const preferred = operator ? String(operator).toLowerCase() : null;
   const mode = modeFor(batteryPct);
   const w = MODES[mode];
   const dest = destination || origin;
@@ -69,6 +73,7 @@ export function rankChargers({
     if (!charger.connectors.some((p) => car.connectors.includes(p))) { skip('Plug not compatible'); continue; }
     if (charger.reliability < FAULTY) { skip('Many recent problem reports'); continue; }
     if (km > range) { skip(`Out of range (${km.toFixed(1)} km)`); continue; }
+    if (fastOnly && charger.type !== 'DC') { skip('Not a fast DC charger (your preference)'); continue; }
 
     const arrival = new Date(date.getTime() + driveMinutes(km) * 60000);
     const occ = occupancyFn(charger, arrival, condo);
@@ -83,6 +88,7 @@ export function rankChargers({
     const deliveredKwh = Math.min(kWh, (power * park.min) / 60);
     if (kWh > 0 && deliveredKwh < Math.min(kWh, MIN_USEFUL_KWH)) { skip(`Too slow for a ${park.label} stop`); continue; }
     const price = priceAt(charger, arrival, condo, isResident);
+    if (maxPrice != null && price > maxPrice + 1e-9) { skip(`Above your RM${Number(maxPrice).toFixed(2)}/kWh budget`); continue; }
     const detourMin = detourMinutes(origin, charger, dest);
     const waitMin = waitMinutes(occ.total);
     candidates.push({
@@ -94,6 +100,7 @@ export function rankChargers({
       deliveredKwh, full: deliveredKwh >= kWh - 1e-9, parkLabel: park.label,
       addedKm: deliveredKwh / car.efficiencyKwhPerKm,
       timeMin: detourMin + waitMin + Math.max(0, chargeMin - park.min),
+      preferred: !!preferred && String(charger.operator || '').toLowerCase().includes(preferred),
     });
   }
 
@@ -101,7 +108,7 @@ export function rankChargers({
     const nCost = normaliser(candidates.map((c) => c.cost));
     const nTime = normaliser(candidates.map((c) => c.timeMin));
     for (const c of candidates) {
-      c.score = w.wCost * nCost(c.cost) + w.wTime * nTime(c.timeMin) + w.wRisk * (1 - c.reliability);
+      c.score = w.wCost * nCost(c.cost) + w.wTime * nTime(c.timeMin) + w.wRisk * (1 - c.reliability) - (c.preferred ? PREFERRED_BONUS : 0);
       c.reasons = reasonsFor(c, target);
     }
     candidates.sort((a, b) => a.score - b.score);
@@ -128,5 +135,6 @@ function reasonsFor(c, target) {
   if (note) r.push(note);
   if (c.isSharedVisit) r.push('Shared condo bay');
   if (c.isResident) r.push('Your condo bay');
+  if (c.preferred) r.push('Your preferred operator');
   return r;
 }

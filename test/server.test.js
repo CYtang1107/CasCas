@@ -142,3 +142,21 @@ test('data survives a server restart', async () => {
   assert.equal((await b.call('GET', `/api/world?at=${WED11 + 60000}`)).body.activeBays['cs-lumina'], 1);
   await b.close();
 });
+
+test('JMB maintenance log: PIN only, validated, and fault bays leave service for drivers', async () => {
+  const s = await start();
+  const fault = { bay: 2, kind: 'fault', costRm: 0, at: WED11, note: 'Cable damaged' };
+  assert.equal((await s.call('POST', '/api/jmb/lumina/maintenance', { entry: fault })).status, 401);
+  const token = (await s.call('POST', '/api/jmb/login', { condoId: 'lumina', pin: '4821' })).body.token;
+  assert.equal((await s.call('POST', '/api/jmb/lumina/maintenance', { entry: { ...fault, bay: 99 } }, token)).status, 400);
+  assert.equal((await s.call('POST', '/api/jmb/lumina/maintenance', { entry: fault }, token)).status, 201);
+  assert.equal((await s.call('GET', '/api/world')).body.faultBays['cs-lumina'], 1);
+  const jmb = (await s.call('GET', '/api/jmb/lumina', null, token)).body;
+  assert.equal(jmb.maintenance.length, 1);
+  assert.equal(jmb.maintenance[0].note, 'Cable damaged');
+  await s.call('POST', '/api/jmb/lumina/maintenance', { entry: { ...fault, kind: 'repair', costRm: 180, at: WED11 + 3600e3 } }, token);
+  assert.equal((await s.call('GET', '/api/world')).body.faultBays['cs-lumina'] ?? 0, 0);
+  const serini = (await s.call('POST', '/api/jmb/login', { condoId: 'serini', pin: '7305' })).body.token;
+  assert.equal((await s.call('POST', '/api/jmb/lumina/maintenance', { entry: fault }, serini)).status, 401);
+  await s.close();
+});

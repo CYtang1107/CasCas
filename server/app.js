@@ -9,6 +9,7 @@ import { loadChargers } from '../data/ocm.js';
 import { normalisePlate, isValidPlate, canAutoApprove, createPass } from '../engine/access.js';
 import { validateSharing } from '../engine/sharing.js';
 import { followRate, savings, overstayTotals } from '../engine/insights.js';
+import { validateEntry, cleanEntry, faultBays } from '../engine/maintenance.js';
 import { createStore } from './store.js';
 import { createAuth } from './auth.js';
 import { cleanSession, cleanBooking, cleanCheckin, cleanSharing } from './validate.js';
@@ -17,6 +18,7 @@ const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const FILES = ['index.html', 'app.js', 'config.js', 'state.js', 'styles.css'];
 const DIRS = ['data', 'engine', 'views'];
 const MAX_SESSIONS = 5000;
+const MAX_MAINTENANCE = 500;
 const MAX_CHECKINS = 200;
 const noCache = (res) => res.setHeader('Cache-Control', 'no-cache');
 
@@ -69,7 +71,12 @@ export function createApp({ dataDir, secret, pins, ocmKey = '', fetchFn = global
     const at = Number(req.query.at) || now();
     const activeBays = {};
     for (const b of store.data.bookings) if (b.start <= at && at < b.end) activeBays[b.chargerId] = (activeBays[b.chargerId] || 0) + 1;
-    res.json({ sharing: store.data.sharing, checkins: store.data.checkins, activeBays });
+    const out = {};
+    for (const c of CONDOS) {
+      const n = faultBays(store.data.maintenance[c.id] || [], c.bays);
+      if (n) out[`cs-${c.id}`] = n;
+    }
+    res.json({ sharing: store.data.sharing, checkins: store.data.checkins, activeBays, faultBays: out });
   });
 
   app.post('/api/bookings', (req, res) => {
@@ -142,7 +149,19 @@ export function createApp({ dataDir, secret, pins, ocmKey = '', fetchFn = global
       sessions: store.data.sessions.filter((s) => s.condoId === id),
       passes: store.data.passes.filter((p) => p.condoId === id),
       sharing: condoWithSharing(id).sharing,
+      maintenance: store.data.maintenance[id] || [],
     });
+  });
+
+  app.post('/api/jmb/:condoId/maintenance', requireJmb, (req, res) => {
+    const condo = condoWithSharing(req.params.condoId);
+    const e = req.body?.entry;
+    const err = validateEntry(e, condo.bays);
+    if (err) return bad(res, err);
+    const list = store.data.maintenance[condo.id] || [];
+    store.data.maintenance[condo.id] = [...list, cleanEntry(e)].slice(-MAX_MAINTENANCE);
+    store.save();
+    res.status(201).json({ maintenance: store.data.maintenance[condo.id] });
   });
 
   app.put('/api/jmb/:condoId/sharing', requireJmb, (req, res) => {

@@ -6,13 +6,18 @@ import { priceAt } from '../engine/pricing.js';
 import { isOpenToVisitors } from '../engine/sharing.js';
 import { occupancyAt } from '../engine/occupancy.js';
 import { buildSession } from '../engine/insights.js';
-import { describeCharger } from '../engine/detail.js';
+import { describeCharger, priceComparison } from '../engine/detail.js';
+import { bestWindow } from '../engine/schedule.js';
+import { parseRequest } from '../engine/assistant.js';
 import { normalisePlate, isValidPlate, formatPlate, canAutoApprove, createPass } from '../engine/access.js';
 import { addSession, anonNumber } from '../state.js';
 import { esc, rm, fmtTime, fmtClock } from './format.js';
 
 const PARK_OPTIONS = [['30m', '30 min'], ['2h', '2 h'], ['4h', '4 h'], ['overnight', 'Overnight']];
-const fresh = () => ({ carId: 'emas7', battery: 35, placeId: 'klem', homeId: '', parkFor: '30m', stage: 'pick', pick: null, flash: '', pending: null, plate: '', selected: null });
+const BUDGETS = [['', 'Any price'], ['0.9', 'Up to RM0.90/kWh'], ['1', 'Up to RM1.00/kWh'], ['1.2', 'Up to RM1.20/kWh'], ['1.5', 'Up to RM1.50/kWh']];
+const OPERATORS = ['Gentari', 'ChargEV', 'JomCharge', 'Tesla'];
+const noPrefs = () => ({ maxPrice: null, fastOnly: false, operator: null });
+const fresh = () => ({ carId: 'emas7', battery: 35, placeId: 'klem', homeId: '', parkFor: '30m', stage: 'pick', pick: null, flash: '', pending: null, plate: '', selected: null, prefs: noPrefs(), ask: '', askNote: '' });
 let ui = fresh();
 let map = null;
 let layer = null;
@@ -33,6 +38,12 @@ export function renderDriver(root, ctx) {
   <div class="driver">
     <section class="panel trip" aria-label="Trip">
       <h2>Plan a charge</h2>
+      <form id="d-ask" class="ask" novalidate>
+        <label class="field grow">Ask CasCas
+          <input id="d-ask-text" type="text" maxlength="200" autocomplete="off" placeholder="e.g. Atto 3 at 20%, going to KL East Mall for 2 hours, under RM1.20, prefer Gentari" value="${esc(ui.ask)}"></label>
+        <button class="btn primary" type="submit">Plan it</button>
+      </form>
+      ${ui.askNote ? `<p class="ask-note" role="status">${esc(ui.askNote)}</p>` : ''}
       <div class="fields">
       <label class="field">Car
         <select id="d-car">${CARS.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select></label>
@@ -46,6 +57,13 @@ export function renderDriver(root, ctx) {
         ${PARK_OPTIONS.map(([v, l]) => `<label><input type="radio" name="d-park" value="${v}"> ${l}</label>`).join('')}
       </fieldset>
       </div>
+      <details class="prefs" ${hasPrefs() ? 'open' : ''}><summary>My preferences${hasPrefs() ? ' (on)' : ''}</summary>
+        <div class="fields">
+          <label class="field">Budget <select id="d-budget">${BUDGETS.map(([v, l]) => `<option value="${v}">${l}</option>`).join('')}</select></label>
+          <label class="field">Charging speed <select id="d-speed"><option value="any">Any</option><option value="fast">Fast DC only</option></select></label>
+          <label class="field">Preferred operator <select id="d-op"><option value="">Any</option>${OPERATORS.map((o) => `<option>${o}</option>`).join('')}</select></label>
+        </div>
+      </details>
       <p class="muted">Demo time: ${esc(fmtTime(ctx.clock))}. Change it at the top to see prices and sharing change.</p>
     </section>
     <div class="map-row" id="d-map-row">
@@ -64,6 +82,13 @@ export function renderDriver(root, ctx) {
   $('#d-place').value = ui.placeId;
   $('#d-home').value = ui.homeId;
   $(`input[name="d-park"][value="${ui.parkFor}"]`).checked = true;
+  $('#d-budget').value = ui.prefs.maxPrice == null ? '' : String(ui.prefs.maxPrice);
+  $('#d-speed').value = ui.prefs.fastOnly ? 'fast' : 'any';
+  $('#d-op').value = ui.prefs.operator || '';
+  $('#d-budget').addEventListener('change', (e) => { ui.prefs.maxPrice = e.target.value ? Number(e.target.value) : null; update(root, ctx); });
+  $('#d-speed').addEventListener('change', (e) => { ui.prefs.fastOnly = e.target.value === 'fast'; update(root, ctx); });
+  $('#d-op').addEventListener('change', (e) => { ui.prefs.operator = e.target.value || null; update(root, ctx); });
+  $('#d-ask').addEventListener('submit', (e) => { e.preventDefault(); ask(root, ctx, $('#d-ask-text').value); });
 
   $('#d-car').addEventListener('change', (e) => { ui.carId = e.target.value; update(root, ctx); });
   $('#d-batt').addEventListener('input', (e) => { ui.battery = Number(e.target.value); update(root, ctx); });
@@ -84,7 +109,7 @@ function compute(ctx) {
   const destination = place.id === 'here' ? null : place;
   const ranking = rankChargers({
     ...ctx.world, car, batteryPct: ui.battery, origin, destination, date: ctx.clock,
-    residentCondoId: ui.homeId || null, parkFor: ui.parkFor,
+    residentCondoId: ui.homeId || null, parkFor: ui.parkFor, prefs: ui.prefs,
   });
   return { car, origin, ranking };
 }
@@ -98,6 +123,47 @@ function update(root, ctx) {
   box.innerHTML = ui.stage === 'pick' ? pickHtml(ranking, ctx) : stageHtml(ctx, ranking);
   bind(root, ctx, ranking, car);
   renderDetail(root, ctx, ranking, car);
+}
+
+function hasPrefs() {
+  return ui.prefs.maxPrice != null || ui.prefs.fastOnly || !!ui.prefs.operator;
+}
+
+// Apply what Ask CasCas understood, then redraw the page so every field shows it.
+function ask(root, ctx, text) {
+  ui.ask = text;
+  const { set, understood } = parseRequest(text, { cars: CARS, places: PLACES });
+  if (set.carId) ui.carId = set.carId;
+  if (set.battery != null) ui.battery = set.battery;
+  if (set.placeId) ui.placeId = set.placeId;
+  if (set.parkFor) ui.parkFor = set.parkFor;
+  if ('maxPrice' in set) ui.prefs.maxPrice = set.maxPrice;
+  if ('fastOnly' in set) ui.prefs.fastOnly = set.fastOnly;
+  if ('operator' in set) ui.prefs.operator = set.operator;
+  ui.askNote = understood.length
+    ? `Understood: ${understood.join(' · ')}. The picks below use these settings.`
+    : 'Sorry, I could not find a battery level, place, stay or preference in that. Try "40%, going to KLCC for 2 hours".';
+  ui.stage = 'pick';
+  renderDriver(root, ctx);
+}
+
+// When should the driver charge at this site? The cheapest open hour in the next 24 h.
+function timingLine(c, ctx, kWh) {
+  const b = bestWindow({ charger: c.charger, condo: c.condo, isResident: c.isResident, from: ctx.clock, hours: 24, kWh });
+  if (!b.best) return '';
+  if (b.isNow || b.savingRm < 0.5) return `<p class="timing"><b>Smart schedule:</b> now is a good time to charge at ${esc(c.charger.name)}.</p>`;
+  const quieter = b.best.occupancy < b.now.occupancy - 0.15 ? ', and it is quieter' : '';
+  return `<p class="timing"><b>Smart schedule:</b> charging at ${esc(c.charger.name)} at ${esc(fmtTime(b.best.at))} costs ${rm(b.best.cost)} instead of ${rm(b.now.cost)} now (save ${rm(b.savingRm)})${quieter}.</p>`;
+}
+
+function compareHtml(r) {
+  const rows = priceComparison(r.results);
+  if (rows.length < 2) return '';
+  return `<details class="compare"><summary>Compare prices (${rows.length} chargers for this trip)</summary>
+    <div class="tbl"><table>
+      <thead><tr><th>Charger</th><th>Type</th><th>Price</th><th>Your charge</th><th>vs cheapest</th><th>Distance</th></tr></thead>
+      <tbody>${rows.map((x) => `<tr><td>${esc(x.name)}<br><span class="muted">${esc(x.operator)}${x.shared ? ' · shared condo bay' : ''}</span></td><td>${esc(x.kind)}</td><td>${rm(x.price)}${x.priceEstimated ? ' est.' : ''}</td><td>${rm(x.cost)}</td><td>${x.vsCheapest ? `+${rm(x.vsCheapest)}` : 'Cheapest'}</td><td>${x.km.toFixed(1)} km</td></tr>`).join('')}</tbody>
+    </table></div></details>`;
 }
 
 function modeLine(mode) {
@@ -115,6 +181,7 @@ function pickHtml(r, ctx) {
   if (!top.length) {
     const nearest = [...r.excluded].sort((a, b) => a.km - b.km)[0];
     const hint = nearest ? ` The nearest is ${esc(nearest.charger.name)}, ${nearest.km.toFixed(1)} km away.` : '';
+    if (hasPrefs()) return `${head}<p class="empty">No charger matches your preferences right now. Loosen your budget, speed or operator under My preferences.</p>`;
     return `${head}<p class="empty">No charger is in range at ${ui.battery}%.${hint} Call your roadside assistance for a mobile charge.</p>`;
   }
   const note = r.balanceNote ? `<p class="balance"><b>Demand balancing.</b> ${esc(r.balanceNote)}</p>` : '';
@@ -134,7 +201,9 @@ function pickHtml(r, ctx) {
   const more = rest.length
     ? `<details class="more"><summary>Choose another charger (${rest.length})</summary><ul>${rest.map((c) => `<li><span>${esc(c.charger.name)} · ${rm(c.price)}/kWh · ${c.km.toFixed(1)} km</span> <span class="btn-row"><button class="btn small" type="button" data-detail="${c.charger.id}">Details</button><button class="btn small" type="button" data-book="${c.charger.id}">Book</button></span></li>`).join('')}</ul></details>`
     : '';
-  return head + note + `<div class="picks">${cards}</div>` + more + off;
+  const own = r.results.find((c) => c.isResident) || top[0];
+  const timing = timingLine(own, ctx, own.full ? own.kWh : own.deliveredKwh);
+  return head + note + timing + `<div class="picks">${cards}</div>` + compareHtml(r) + more + off;
 }
 
 function stageHtml(ctx, r) {
@@ -401,7 +470,8 @@ function renderDetail(root, ctx, ranking, car) {
   const condo = ctx.world.condos.find((c) => c.id === ch.condoId) || null;
   const checkins = (ctx.checkins || ctx.state.checkins)[ch.id] || [];
   const d = describeCharger({ charger: ch, ranking, condo, date: ctx.clock, isResident: !!condo && condo.id === ui.homeId, checkins });
-  aside.innerHTML = detailHtml(d);
+  const cand = ranking.results.find((c) => c.charger.id === ch.id);
+  aside.innerHTML = detailHtml(d, cand ? timingLine(cand, ctx, cand.full ? cand.kWh : cand.deliveredKwh) : '');
   aside.hidden = false;
   row.classList.add('has-detail');
   if (!wasOpen && map) map.invalidateSize();
@@ -413,9 +483,10 @@ function renderDetail(root, ctx, ranking, car) {
   });
 }
 
-function detailHtml(d) {
+function detailHtml(d, timing = '') {
   const specs = [d.operator, `${d.type} ${d.kw} kW`, d.connectors.join(', '), `${d.bays} bay${d.bays === 1 ? '' : 's'}`];
   if (d.pilot) specs.push('Pilot condo (simulated)');
+  if (d.faultBays) specs.push(`${d.faultBays} bay${d.faultBays === 1 ? '' : 's'} out of service`);
   const notes = [d.priceNote, d.access].filter(Boolean);
   const checkins = d.recentCheckins.length
     ? `<ul class="checkins">${d.recentCheckins.map((c) => `<li><span class="chip ${c.ok ? 'on' : 'warn'}">${c.ok ? 'Worked' : 'Problem'}</span> ${esc(fmtTime(new Date(c.at)))}${c.note ? ` · ${esc(c.note)}` : ''}</li>`).join('')}</ul>`
@@ -433,6 +504,7 @@ function detailHtml(d) {
       <div><dt>Wait</dt><dd>${d.waitMin ? `~${d.waitMin} min` : 'None'}</dd></div>
     </dl>
     ${notes.length ? `<p class="muted">${notes.map(esc).join(' · ')}</p>` : ''}
+    ${timing}
     ${d.reasons.length ? `<h4>For your trip</h4><ul class="reasons">${d.reasons.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}
     <h4>Recent check-ins (${d.checkinCount})</h4>
     ${checkins}

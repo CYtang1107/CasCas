@@ -60,3 +60,12 @@ test('simulated KL East: sharing condos earn more per unit than non-sharing ones
   assert.ok(avg(sharing) > avg(closed), `${avg(sharing)} vs ${avg(closed)}`);
   for (const r of perCondo) assert.ok(r.perUnitSaving > 3 && r.perUnitSaving < 40, `${r.condo.id}: ${r.perUnitSaving}`);
 });
+
+test('JMB income comes from the surplus after fixed, variable and maintenance costs', () => {
+  const sim = simulateCondoMonth(condo, site, oct, { occupancyFn: () => ({ resident: 0.2, visitor: 0, total: 0.2 }) });
+  const fixed = 125 * condo.bays;
+  close(sim.recovery.operatingSurplus, sim.revenue - sim.electricityCost - sim.kWhSold * 0.05 - fixed, 1e-6);
+  close(sim.jmbIncome, sim.recovery.operatingSurplus * condo.jmbShare, 1e-6);
+  const repaired = simulateCondoMonth(condo, site, oct, { occupancyFn: () => ({ resident: 0.2, visitor: 0, total: 0.2 }), maintenanceRm: 300 });
+  close(sim.jmbIncome - repaired.jmbIncome, 300 * condo.jmbShare, 1e-6);
+});

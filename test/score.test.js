@@ -143,3 +143,22 @@ test('charging that fits inside the stop costs no time', () => {
   assert.equal(r.results[0].charger.id, 'ac');
   assert.equal(r.results[0].full, true);
 });
+
+test('preferences: budget and fast-only exclude, a preferred operator ranks higher', () => {
+  const list = [
+    mk('dear', 1, { price: 1.8 }),
+    mk('ac', 1, { type: 'AC', kw: 22, connectors: ['Type2'], price: 0.9 }),
+    mk('other', 2, { price: 1.3 }),
+    mk('gen', 2, { operator: 'Gentari', price: 1.3 }),
+  ];
+  const r = run(list, 30, { prefs: { maxPrice: 1.5, fastOnly: true, operator: 'gentari' }, parkFor: '2h' });
+  assert.deepEqual(r.results.map((c) => c.charger.id), ['gen', 'other']);
+  assert.match(r.excluded.find((x) => x.charger.id === 'dear').reason, /budget/);
+  assert.match(r.excluded.find((x) => x.charger.id === 'ac').reason, /fast/i);
+  assert.ok(r.results[0].reasons.includes('Your preferred operator'));
+});
+
+test('no preferences changes nothing', () => {
+  const list = [mk('a', 1), mk('b', 2, { price: 1.1 })];
+  assert.deepEqual(run(list, 30).results.map((c) => c.charger.id), run(list, 30, { prefs: {} }).results.map((c) => c.charger.id));
+});

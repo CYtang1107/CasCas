@@ -5,6 +5,9 @@ import { validateSharing } from '../engine/sharing.js';
 import { barChart24, lineChart } from './charts.js';
 import { esc, rm, rm0, num, pct, monthLabel } from './format.js';
 import { privateSection } from './jmb-shared.js';
+import { recoveryHtml, quietHtml, maintenanceHtml, bindMaintenance, reportCsv, downloadCsv } from './jmb-ops.js';
+import { bayStatus, maintenanceCost } from '../engine/maintenance.js';
+import { filterSessions } from '../engine/insights.js';
 
 let condoId = null;
 const PEAK_HOURS = Array.from({ length: TNB.peakEndHour - TNB.peakStartHour }, (_, i) => TNB.peakStartHour + i);
@@ -15,7 +18,11 @@ export function renderJmb(root, ctx) {
   const condo = condos.find((c) => c.id === condoId);
   const charger = chargers.find((ch) => ch.condoId === condo.id);
   const start = new Date(ctx.clock.getFullYear(), ctx.clock.getMonth(), 1);
-  const sim = simulateCondoMonth(condo, charger, start);
+  const priv = privateSection(condo, charger, ctx);
+  const entries = priv.maintenance;
+  const monthEnd = new Date(start.getFullYear(), start.getMonth() + 1, 1).getTime();
+  const maintenanceRm = entries ? maintenanceCost(entries, start.getTime(), monthEnd) : 0;
+  const sim = simulateCondoMonth(condo, charger, start, { maintenanceRm });
   const s = condo.sharing;
   const sinkingYear = 0.1 * condo.monthlyFee * condo.units * 12;
   const boost = (sim.jmbIncome * 12) / sinkingYear;
@@ -23,7 +30,7 @@ export function renderJmb(root, ctx) {
   const checkins = (ctx.checkins || ctx.state.checkins)[charger.id] || [];
   const problems = checkins.filter((c) => !c.ok);
 
-  const priv = privateSection(condo, charger, ctx);
+  const bays = entries ? bayStatus(entries, condo.bays) : null;
   root.innerHTML = `
   <div class="jmb">
     <div class="view-head">
@@ -35,7 +42,7 @@ export function renderJmb(root, ctx) {
 
     <div class="kpis">
       <div class="kpi"><span>Charging income this month</span><b>${rm0(sim.revenue)}</b></div>
-      <div class="kpi"><span>JMB share after electricity</span><b>${rm0(sim.jmbIncome)}</b></div>
+      <div class="kpi"><span>JMB share after all costs</span><b>${rm0(sim.jmbIncome)}</b></div>
       <div class="kpi hero"><span>Saving per unit per month</span><b>${rm(sim.perUnitSaving)}</b></div>
       <div class="kpi"><span>Energy delivered</span><b>${num(sim.kWhSold)} kWh</b></div>
     </div>
@@ -44,6 +51,7 @@ export function renderJmb(root, ctx) {
       <section class="card"><h3>An average day: who charges when</h3>
         ${barChart24({ a: sim.residentByHour, b: sim.visitorByHour, shade: PEAK_HOURS, aLabel: 'Residents', bLabel: 'Outside drivers (shared bays)' })}
         <p class="muted">Shaded hours are TNB peak (weekdays 2–10 PM). Residents charge in the evening; outside drivers fill the bays they leave empty during the day.</p>
+        ${quietHtml(condo, charger, sim)}
       </section>
       <section class="card"><h3>Charging income, last 6 months</h3>
         ${lineChart({ labels: months, series: [
@@ -60,6 +68,7 @@ export function renderJmb(root, ctx) {
         <p>Or add it to the sinking fund: <b>+${rm0(sim.jmbIncome * 12)} a year</b>, ${pct(boost)} on top of owners' contributions of ${rm0(sinkingYear)}.</p>
         <div class="bar" role="img" aria-label="Sinking fund boost ${pct(boost)}"><span style="width:${Math.min(100, boost * 100)}%"></span></div>
         <p class="muted">Hardware payback on ${condo.bays} bays at ${rm0(CONST.hardwarePerBay)} each: ${sim.paybackMonths ? `${sim.paybackMonths} months` : 'not reached at these prices'}. CO₂ avoided: ${num(sim.co2AvoidedKg)} kg this month.</p>
+        <button id="j-report" class="btn small" type="button">Download monthly report (CSV)</button>
       </section>
       <section class="card"><h3>Sharing with outside drivers</h3>
         ${priv.canEdit ? '' : '<p class="muted">Log in with the condo PIN below to change these settings.</p>'}
@@ -81,11 +90,18 @@ export function renderJmb(root, ctx) {
       </section>
     </div>
 
+    <div class="grid2">
+      ${recoveryHtml(condo, sim)}
+      ${maintenanceHtml(condo, entries, priv.canEdit, ctx.clock)}
+    </div>
+
     <section class="card"><h3>Charger health</h3>
       <p class="muted">Reliability ${pct(charger.reliability)} · ${checkins.length} check-ins ${ctx.api ? 'shared by all drivers' : 'from drivers on this device'}.</p>
       <div class="tbl"><table>
         <thead><tr><th>Bay</th><th>Status</th><th>Latest report</th></tr></thead>
         <tbody>${Array.from({ length: condo.bays }, (_, i) => {
+          const b = bays ? bays[i] : null;
+          if (b?.status === 'fault') return `<tr><td>Bay ${i + 1}</td><td><span class="chip warn">Out of service</span></td><td>${esc(b.last.note || 'Fault logged by the JMB')}</td></tr>`;
           const p = problems[problems.length - 1 - i];
           return `<tr><td>Bay ${i + 1}</td><td>${p ? '<span class="chip warn">Problem reported</span>' : '<span class="chip on">Working</span>'}</td><td>${p ? esc(p.note || 'No details given') : '—'}</td></tr>`;
         }).join('')}</tbody>
@@ -122,4 +138,10 @@ export function renderJmb(root, ctx) {
     ctx.rerender();
   });
   priv.bind(root);
+  bindMaintenance(root, condo, ctx, priv.addMaintenance);
+  $('#j-report').addEventListener('click', () => {
+    const sessions = priv.sessions ? filterSessions(priv.sessions, { from: start.getTime(), to: monthEnd }).length : 'n/a (log in)';
+    const month = start.toLocaleString('en-MY', { month: 'long', year: 'numeric' });
+    downloadCsv(`cascas-${condo.id}-report-${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, '0')}.csv`, reportCsv(condo, charger, sim, { month, sessions, entries }));
+  });
 }

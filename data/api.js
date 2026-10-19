@@ -33,6 +33,7 @@ export function createApi({ base = '', fetchFn = (...a) => globalThis.fetch(...a
     login: (condoId, pin) => call(fetchFn, 'POST', u('jmb/login'), { condoId, pin }),
     jmb: (condoId, token) => call(fetchFn, 'GET', u(`jmb/${id(condoId)}`), undefined, token),
     saveSharing: (condoId, token, sharing) => call(fetchFn, 'PUT', u(`jmb/${id(condoId)}/sharing`), { sharing }, token),
+    addMaintenance: (condoId, token, entry) => call(fetchFn, 'POST', u(`jmb/${id(condoId)}/maintenance`), { entry }, token),
   };
 }
 

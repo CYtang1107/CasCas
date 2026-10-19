@@ -10,6 +10,16 @@ function accessLine(charger, condo, date, isResident) {
   return isOpenToVisitors(condo, date) ? 'Shared now with visitors' : 'Residents only right now';
 }
 
+// Every suitable charger for this trip, cheapest first, with the gap to the cheapest.
+export function priceComparison(results) {
+  const rows = results.map((c) => ({
+    id: c.charger.id, name: c.charger.name, operator: c.charger.operator, kind: `${c.charger.type} ${c.charger.kw} kW`,
+    price: c.price, priceEstimated: !!c.charger.priceEstimated, cost: c.cost, km: c.km, shared: !!c.isSharedVisit,
+  })).sort((a, b) => a.cost - b.cost || a.km - b.km);
+  const cheapest = rows.length ? rows[0].cost : 0;
+  return rows.map((r) => ({ ...r, vsCheapest: Math.round((r.cost - cheapest) * 100) / 100 }));
+}
+
 export function describeCharger({ charger, ranking, condo = null, date, isResident = false, checkins = [] }) {
   const results = ranking?.results || [];
   const idx = results.findIndex((c) => c.charger.id === charger.id);
@@ -33,6 +43,7 @@ export function describeCharger({ charger, ranking, condo = null, date, isReside
     connectors: charger.connectors,
     bays: charger.bays,
     pilot: !!charger.pilot,
+    faultBays: charger.faultBays || 0,
     priceNow: r ? r.price : priceAt(charger, date, condo, isResident),
     priceEstimated: !!charger.priceEstimated,
     priceNote: priceNote(charger, date, condo),

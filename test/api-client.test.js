@@ -41,3 +41,13 @@ test('booked bays add to occupancy, capped at full', () => {
   assert.ok(Math.abs(occupancyAt({ ...ch, bookedBays: 2 }, at).total - Math.min(1, base + 0.5)) < 1e-9);
   assert.equal(occupancyAt({ ...ch, bookedBays: 10 }, at).total, 1);
 });
+
+test('maintenance entries are posted with the JMB token', async () => {
+  const calls = [];
+  const api = createApi({ fetchFn: async (url, opts) => { calls.push({ url, ...opts }); return { ok: true, status: 201, json: async () => ({}) }; } });
+  await api.addMaintenance('lumina', 'tok', { bay: 1, kind: 'service', costRm: 80, at: 5 });
+  assert.equal(calls[0].url, 'api/jmb/lumina/maintenance');
+  assert.equal(calls[0].method, 'POST');
+  assert.equal(calls[0].headers.authorization, 'Bearer tok');
+  assert.deepEqual(JSON.parse(calls[0].body), { entry: { bay: 1, kind: 'service', costRm: 80, at: 5 } });
+});

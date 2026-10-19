@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { describeCharger } from '../engine/detail.js';
+import { describeCharger, priceComparison } from '../engine/detail.js';
 
 const wed11 = new Date(2026, 9, 21, 11);
 const charger = (extra = {}) => ({ id: 'a', name: 'KL East Mall DC', address: 'Jalan 1, KL', operator: 'Gentari', lat: 3.21, lng: 101.72,
@@ -56,4 +56,16 @@ test('condo bays say whether they are shared now', () => {
 test('no charge needed is said plainly', () => {
   const d = describeCharger({ charger: charger(), ranking: { kWh: 0, results: [], excluded: [] }, date: wed11, checkins: [] });
   assert.equal(d.verdict, 'No charge needed for this trip');
+});
+
+test('price comparison lists every option cheapest first, with the gap to the cheapest', () => {
+  const rows = priceComparison([
+    { ...result('a', { cost: 30, price: 1.1 }), charger: charger({ id: 'a', name: 'A' }), km: 1.2 },
+    { ...result('b', { cost: 20, price: 0.9 }), charger: charger({ id: 'b', name: 'B', type: 'AC', kw: 22 }), km: 3 },
+  ]);
+  assert.deepEqual(rows.map((r) => r.id), ['b', 'a']);
+  assert.equal(rows[0].cost, 20);
+  assert.equal(rows[0].vsCheapest, 0);
+  assert.equal(rows[1].vsCheapest, 10);
+  assert.equal(rows[0].kind, 'AC 22 kW');
 });

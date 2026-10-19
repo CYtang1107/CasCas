@@ -7,9 +7,12 @@ Shared EV charging for Sime Darby Property townships. Prototype for the SDP Univ
 ## What it shows
 
 - **Driver:** battery-aware picks across every provider around KL East. Low battery gets the nearest working charger; high battery gets cheaper, quieter ones, with demand balancing that keeps busy fast chargers free for drivers who need them. Every booking records (anonymously) whether the driver took a CasCas pick and what it saved vs the nearest charger.
+- **Ask CasCas:** type a trip in plain English ("Atto 3 at 20%, going to KL East Mall for 2 hours, under RM1.20, prefer Gentari") and the form fills itself. Rule-based, so it works offline and never guesses.
+- **Preferences, schedule and prices:** a budget, fast-DC-only and a preferred operator shape the picks; the smart schedule says when the next 24 hours are cheaper (residents at TNB peak are sent to 10 PM off-peak); "Compare prices" lists every suitable charger by the cost of your charge.
 - **Idle-hour sharing:** condo bays open to outside drivers during the hours the JMB sets, with residents first. Visitors enter their number plate and are approved automatically while the condo is sharing.
 - **During the charge:** picks near your destination show the walk ("7 min walk to KL East Mall"); the charging screen gives the slot end time, notifications and the overstay fee that keeps shared bays moving.
 - **JMB:** charging income, saving per unit, sharing settings, charger health, expected visitors (plates for the guardhouse), and driver behaviour: follow rate, savings, weekly trend, mode breakdown and an anonymous session log with CSV export.
+- **Cost recovery and operations (JMB):** receipts minus TNB electricity, other variable costs, fixed costs and logged repairs give the operating surplus, split between the JMB and the charging partner, with break-even kWh (the method in our proposal, section 6.2). Underused hours are flagged against the sharing hours. The PIN-gated maintenance log records faults, repairs and services with costs; a faulty bay leaves service for drivers until a repair is logged. A monthly performance report downloads as CSV.
 
 ## Data
 

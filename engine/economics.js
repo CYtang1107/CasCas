@@ -2,6 +2,7 @@ import { CONST } from '../config.js';
 import { tnbRate } from '../data/tariff.js';
 import { priceAt } from './pricing.js';
 import { occupancyAt } from './occupancy.js';
+import { costRecovery } from './recovery.js';
 
 export function co2AvoidedKg(kWh) {
   return (kWh / CONST.evKwhPerKm) * (CONST.petrolKgPerKm - CONST.evKwhPerKm * CONST.gridKgPerKwh);
@@ -26,7 +27,8 @@ function eachHour(start, days, fn) {
   }
 }
 
-export function simulateCondoMonth(condo, charger, start, { occupancyFn = occupancyAt, days = 30 } = {}) {
+// `maintenanceRm` is what the JMB logged for repairs and services this month.
+export function simulateCondoMonth(condo, charger, start, { occupancyFn = occupancyAt, days = 30, maintenanceRm = 0 } = {}) {
   const residentByHour = Array(24).fill(0);
   const visitorByHour = Array(24).fill(0);
   let residentKwh = 0, visitorKwh = 0, residentRevenue = 0, visitorRevenue = 0, electricityCost = 0;
@@ -50,7 +52,16 @@ export function simulateCondoMonth(condo, charger, start, { occupancyFn = occupa
     jmbShare: condo.jmbShare, units: condo.units, bays: condo.bays,
   });
   const utilisation = (residentKwh + visitorKwh) / (condo.bays * charger.kw * 24 * days);
-  return { ...econ, residentKwh, visitorKwh, residentRevenue, visitorRevenue, residentByHour, visitorByHour, utilisation };
+  // The JMB is paid from the operating surplus after every cost, not just electricity.
+  const recovery = costRecovery({
+    kWh: econ.kWhSold, revenue: econ.revenue, electricityCost, variablePerKwh: CONST.otherCostPerKwh,
+    fixedMonthly: CONST.fixedPerBayMonthly * condo.bays * (days / 30), maintenanceRm, jmbShare: condo.jmbShare, units: condo.units,
+  });
+  return {
+    ...econ, residentKwh, visitorKwh, residentRevenue, visitorRevenue, residentByHour, visitorByHour, utilisation, recovery,
+    jmbIncome: recovery.jmbIncome, perUnitSaving: recovery.perUnit,
+    paybackMonths: recovery.operatingSurplus > 0 ? Math.ceil((condo.bays * CONST.hardwarePerBay) / recovery.operatingSurplus) : null,
+  };
 }
 
 // Six months ending at `value`, a simple simulated ramp-up as EV ownership grows.
