@@ -9,6 +9,8 @@ import { buildSession } from '../engine/insights.js';
 import { describeCharger, priceComparison } from '../engine/detail.js';
 import { bestWindow } from '../engine/schedule.js';
 import { parseRequest } from '../engine/assistant.js';
+import { planTrip } from '../engine/trip.js';
+import { TRIP_PLACES, HIGHWAY_CHARGERS } from '../data/trips.js';
 import { normalisePlate, isValidPlate, formatPlate, canAutoApprove, createPass } from '../engine/access.js';
 import { addSession, anonNumber } from '../state.js';
 import { esc, rm, fmtTime, fmtClock } from './format.js';
@@ -17,7 +19,9 @@ const PARK_OPTIONS = [['30m', '30 min'], ['2h', '2 h'], ['4h', '4 h'], ['overnig
 const BUDGETS = [['', 'Any price'], ['0.9', 'Up to RM0.90/kWh'], ['1', 'Up to RM1.00/kWh'], ['1.2', 'Up to RM1.20/kWh'], ['1.5', 'Up to RM1.50/kWh']];
 const OPERATORS = ['Gentari', 'ChargEV', 'JomCharge', 'Tesla'];
 const noPrefs = () => ({ maxPrice: null, fastOnly: false, operator: null });
-const fresh = () => ({ carId: 'emas7', battery: 35, placeId: 'klem', homeId: '', parkFor: '30m', stage: 'pick', pick: null, flash: '', pending: null, plate: '', selected: null, prefs: noPrefs(), ask: '', askNote: '' });
+const ALL_PLACES = [...PLACES, ...TRIP_PLACES];
+const placeOf = (id) => ALL_PLACES.find((p) => p.id === id) || PLACES[0];
+const fresh = () => ({ carId: 'emas7', battery: 35, placeId: 'klem', homeId: '', parkFor: '30m', stage: 'pick', pick: null, flash: '', pending: null, plate: '', selected: null, prefs: noPrefs(), ask: '', askNote: '', arriveMin: 20 });
 let ui = fresh();
 let map = null;
 let layer = null;
@@ -40,7 +44,7 @@ export function renderDriver(root, ctx) {
       <h2>Plan a charge</h2>
       <form id="d-ask" class="ask" novalidate>
         <label class="field grow">Ask CasCas
-          <input id="d-ask-text" type="text" maxlength="200" autocomplete="off" placeholder="e.g. Atto 3 at 20%, going to KL East Mall for 2 hours, under RM1.20, prefer Gentari" value="${esc(ui.ask)}"></label>
+          <input id="d-ask-text" type="text" maxlength="200" autocomplete="off" placeholder="e.g. Atto 3 at 71%, going to Melaka, arrive with 23%  ·  or: 20%, KL East Mall for 2 hours, under RM1.20" value="${esc(ui.ask)}"></label>
         <button class="btn primary" type="submit">Plan it</button>
       </form>
       ${ui.askNote ? `<p class="ask-note" role="status">${esc(ui.askNote)}</p>` : ''}
@@ -50,10 +54,13 @@ export function renderDriver(root, ctx) {
       <label class="field">Battery now <output id="d-batt-out"></output>
         <input id="d-batt" type="range" min="5" max="100" step="1"></label>
       <label class="field">Going to
-        <select id="d-place">${PLACES.map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join('')}</select></label>
+        <select id="d-place"><optgroup label="Around KL East">${PLACES.map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join('')}</optgroup>
+          <optgroup label="Longer trips">${TRIP_PLACES.map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join('')}</optgroup></select></label>
+      <label class="field" id="d-arrive-wrap" ${placeOf(ui.placeId).trip ? '' : 'hidden'}>Arrive with at least <output id="d-arrive-out"></output>
+        <input id="d-arrive" type="range" min="5" max="50" step="1"></label>
       <label class="field">I live at
         <select id="d-home"><option value="">Not a resident here</option>${condos.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select></label>
-      <fieldset class="field seg"><legend>How long will you park?</legend>
+      <fieldset class="field seg" id="d-park-wrap" ${placeOf(ui.placeId).trip ? "hidden" : ""}><legend>How long will you park?</legend>
         ${PARK_OPTIONS.map(([v, l]) => `<label><input type="radio" name="d-park" value="${v}"> ${l}</label>`).join('')}
       </fieldset>
       </div>
@@ -82,6 +89,8 @@ export function renderDriver(root, ctx) {
   $('#d-place').value = ui.placeId;
   $('#d-home').value = ui.homeId;
   $(`input[name="d-park"][value="${ui.parkFor}"]`).checked = true;
+  $('#d-arrive').value = ui.arriveMin;
+  $('#d-arrive').addEventListener('input', (e) => { ui.arriveMin = Number(e.target.value); update(root, ctx); });
   $('#d-budget').value = ui.prefs.maxPrice == null ? '' : String(ui.prefs.maxPrice);
   $('#d-speed').value = ui.prefs.fastOnly ? 'fast' : 'any';
   $('#d-op').value = ui.prefs.operator || '';
@@ -92,7 +101,12 @@ export function renderDriver(root, ctx) {
 
   $('#d-car').addEventListener('change', (e) => { ui.carId = e.target.value; update(root, ctx); });
   $('#d-batt').addEventListener('input', (e) => { ui.battery = Number(e.target.value); update(root, ctx); });
-  $('#d-place').addEventListener('change', (e) => { ui.placeId = e.target.value; update(root, ctx); });
+  $('#d-place').addEventListener('change', (e) => {
+    ui.placeId = e.target.value;
+    $('#d-arrive-wrap').hidden = !placeOf(ui.placeId).trip;
+    $('#d-park-wrap').hidden = placeOf(ui.placeId).trip;
+    update(root, ctx);
+  });
   $('#d-home').addEventListener('change', (e) => { ui.homeId = e.target.value; update(root, ctx); });
   root.querySelectorAll('input[name="d-park"]').forEach((r) => r.addEventListener('change', (e) => { ui.parkFor = e.target.value; update(root, ctx); }));
 
@@ -105,22 +119,28 @@ function compute(ctx) {
   const car = CARS.find((c) => c.id === ui.carId);
   const home = ctx.world.condos.find((c) => c.id === ui.homeId) || null;
   const origin = home ? { lat: home.lat, lng: home.lng } : START;
-  const place = PLACES.find((p) => p.id === ui.placeId);
+  const place = placeOf(ui.placeId);
   const destination = place.id === 'here' ? null : place;
   const ranking = rankChargers({
     ...ctx.world, car, batteryPct: ui.battery, origin, destination, date: ctx.clock,
     residentCondoId: ui.homeId || null, parkFor: ui.parkFor, prefs: ui.prefs,
   });
-  return { car, origin, ranking };
+  const trip = place.trip
+    ? planTrip({ chargers: [...HIGHWAY_CHARGERS, ...ctx.world.chargers], car, startPct: ui.battery, arriveMinPct: ui.arriveMin,
+      origin: { ...origin, name: home ? home.name : 'KL East' }, destination: place, date: ctx.clock })
+    : null;
+  return { car, origin, ranking, trip, place };
 }
 
 function update(root, ctx) {
-  const { car, origin, ranking } = compute(ctx);
+  const { car, origin, ranking, trip, place } = compute(ctx);
   root.querySelector('#d-batt-out').textContent = `${ui.battery}%`;
+  root.querySelector('#d-arrive-out').textContent = `${ui.arriveMin}%`;
   last = { ranking, car };
   drawMarkers(root, ctx, origin, ranking, car);
+  drawTrip(origin, trip, place);
   const box = root.querySelector('#d-results');
-  box.innerHTML = ui.stage === 'pick' ? pickHtml(ranking, ctx) : stageHtml(ctx, ranking);
+  box.innerHTML = trip && ui.stage === 'pick' ? tripHtml(trip, place, ctx) : ui.stage === 'pick' ? pickHtml(ranking, ctx) : stageHtml(ctx, ranking);
   bind(root, ctx, ranking, car);
   renderDetail(root, ctx, ranking, car);
 }
@@ -132,7 +152,8 @@ function hasPrefs() {
 // Apply what Ask CasCas understood, then redraw the page so every field shows it.
 function ask(root, ctx, text) {
   ui.ask = text;
-  const { set, understood } = parseRequest(text, { cars: CARS, places: PLACES });
+  const { set, understood } = parseRequest(text, { cars: CARS, places: ALL_PLACES });
+  if (set.arriveMin != null) ui.arriveMin = set.arriveMin;
   if (set.carId) ui.carId = set.carId;
   if (set.battery != null) ui.battery = set.battery;
   if (set.placeId) ui.placeId = set.placeId;
@@ -141,7 +162,7 @@ function ask(root, ctx, text) {
   if ('fastOnly' in set) ui.prefs.fastOnly = set.fastOnly;
   if ('operator' in set) ui.prefs.operator = set.operator;
   ui.askNote = understood.length
-    ? `Understood: ${understood.join(' · ')}. The picks below use these settings.`
+    ? `Understood: ${understood.join(' · ')}. ${placeOf(ui.placeId).trip ? 'Your trip plan is below.' : 'The picks below use these settings.'}`
     : 'Sorry, I could not find a battery level, place, stay or preference in that. Try "40%, going to KLCC for 2 hours".';
   ui.stage = 'pick';
   renderDriver(root, ctx);
@@ -154,6 +175,33 @@ function timingLine(c, ctx, kWh) {
   if (b.isNow || b.savingRm < 0.5) return `<p class="timing"><b>Smart schedule:</b> now is a good time to charge at ${esc(c.charger.name)}.</p>`;
   const quieter = b.best.occupancy < b.now.occupancy - 0.15 ? ', and it is quieter' : '';
   return `<p class="timing"><b>Smart schedule:</b> charging at ${esc(c.charger.name)} at ${esc(fmtTime(b.best.at))} costs ${rm(b.best.cost)} instead of ${rm(b.now.cost)} now (save ${rm(b.savingRm)})${quieter}.</p>`;
+}
+
+// Long trip: start, legs, charging stops (how much and how long), arrival. Like a trip planner,
+// but it charges only what the next leg needs, at fast DC chargers.
+function tripHtml(t, place, ctx) {
+  const head = `<div class="res-head"><h2>Trip to ${esc(place.name)}</h2><span class="mode mode-balanced">${t.ok ? `${t.stops.length} charge stop${t.stops.length === 1 ? '' : 's'}` : 'Not possible'}</span></div>`;
+  if (!t.ok) return `${head}<p class="empty">${esc(t.error)}</p>`;
+  const tot = t.totals;
+  const pctTag = (p) => `<span class="batt ${p < 20 ? 'low' : ''}">${Math.round(p)}%</span>`;
+  const legLine = (l) => `<li class="trip-leg"><span>${Math.round(l.km)} km · ${formatDuration(l.minutes)}</span></li>`;
+  const items = [`<li class="trip-pt"><div><span class="muted">Start</span><b>${esc(t.legs[0].from)}</b></div>${pctTag(t.legs[0].startPct)}</li>`];
+  t.legs.forEach((l, i) => {
+    items.push(legLine(l));
+    const s = t.stops[i];
+    if (s) {
+      items.push(`<li class="trip-stop"><div><span class="stop-tag">Charging stop</span><b>${esc(s.charger.name)}</b>
+        <span class="muted">${esc(s.charger.operator)} · DC ${s.charger.kw} kW · ${rm(s.price)}/kWh · ${esc(fmtTime(new Date(s.at)))}</span></div>
+        <div class="charge-bar">${pctTag(s.arrivePct)}<span class="track"><span style="left:${s.arrivePct}%;width:${s.departPct - s.arrivePct}%"></span></span>${pctTag(s.departPct)}</div>
+        <p class="muted">${formatDuration(s.minutes)} · ${s.kWh.toFixed(1)} kWh · ${rm(s.cost)}</p></li>`);
+    }
+  });
+  items.push(`<li class="trip-pt"><div><span class="muted">Arrive</span><b>${esc(place.name)}</b></div>${pctTag(t.arrivePct)}</li>`);
+  return `${head}
+    <p class="trip-total"><b>${formatDuration(tot.totalMin)}</b> total trip · ${Math.round(tot.km)} km · ${formatDuration(tot.chargeMin || 0.01)} charging${tot.cost ? ` · ${rm(tot.cost)} to charge` : ''}</p>
+    <ol class="trip">${items.join('')}</ol>
+    <p class="muted">${t.stops.length ? 'CasCas charges only what the next leg needs, and never past 80%, where fast charging slows down, so stops stay short.' : `No stop needed: you arrive with ${Math.round(t.arrivePct)}%.`} Highway chargers are demo data; times assume ${90} km/h.</p>
+    <div class="btn-row"><a class="btn primary" href="${esc(t.directionsUrl)}" target="_blank" rel="noopener">Get directions</a></div>`;
 }
 
 function compareHtml(r) {
@@ -403,7 +451,25 @@ function stopTimer() {
   timer = null;
 }
 
+let tripLayer = null;
+function drawTrip(origin, t, place) {
+  if (!map) return;
+  const had = !!tripLayer;
+  if (tripLayer) { tripLayer.remove(); tripLayer = null; }
+  if (!t) { if (had) map.setView([3.2135, 101.7265], 14); return; }
+  tripLayer = L.layerGroup().addTo(map);
+  const pts = [[origin.lat, origin.lng], ...t.stops.map((s) => [s.charger.lat, s.charger.lng]), [place.lat, place.lng]];
+  L.polyline(pts, { className: 'trip-line', weight: 5 }).addTo(tripLayer);
+  for (const s of t.stops) {
+    L.marker([s.charger.lat, s.charger.lng], { icon: L.divIcon({ html: `<span class="pin pick">⚡ ${Math.round(s.arrivePct)}→${s.departPct}%</span>`, className: 'pin-wrap', iconSize: null }), title: s.charger.name })
+      .bindPopup(`<div class="pop"><b>${esc(s.charger.name)}</b><br>Charge ${Math.round(s.arrivePct)}% → ${s.departPct}% · ${formatDuration(s.minutes)}</div>`).addTo(tripLayer);
+  }
+  L.marker([place.lat, place.lng], { icon: L.divIcon({ html: `<span class="pin dest">${esc(place.name)}</span>`, className: 'pin-wrap', iconSize: null }) }).addTo(tripLayer);
+  map.fitBounds(pts, { padding: [30, 30] });
+}
+
 function initMap(el, fallback) {
+  tripLayer = null;
   if (!window.L) { el.hidden = true; fallback.hidden = false; return; }
   map = L.map(el, { scrollWheelZoom: true }).setView([3.2135, 101.7265], 14);
   const tiles = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {

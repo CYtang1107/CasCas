@@ -12,9 +12,17 @@ function stayFor(minutes) {
 }
 
 export function parseRequest(text, { cars, places }) {
-  const t = ` ${String(text || '').toLowerCase()} `;
+  let t = ` ${String(text || '').toLowerCase()} `;
   const set = {};
   const understood = [];
+
+  // "arrive with 23%" / "keep 30% when I get there": the battery to have left at the end of a trip.
+  const arrive = t.match(/(?:arriv\w*|left|keep|reserve)[^%\d]{0,20}(\d{1,2})\s*(?:%|percent)/) || t.match(/(\d{1,2})\s*(?:%|percent)\s*(?:left|when i (?:get|arrive)|on arrival|at the end)/);
+  if (arrive) {
+    set.arriveMin = Math.min(50, Math.max(5, Number(arrive[1])));
+    understood.push(`Arrive with at least ${set.arriveMin}%`);
+    t = t.replace(arrive[0], ' ');
+  }
 
   const batt = t.match(/(\d{1,3})\s*(%|percent)/) || t.match(/battery\D{0,12}(\d{1,3})/);
   if (batt) {
@@ -30,8 +38,10 @@ export function parseRequest(text, { cars, places }) {
     }
   }
 
-  for (const [id, words] of Object.entries(PLACE_WORDS)) {
-    if (words.some((w) => t.includes(w)) && places.some((p) => p.id === id)) {
+  const hit = (w) => new RegExp(`(^|[^a-z])${w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^a-z]|$)`).test(t);
+  const placeWords = { ...Object.fromEntries(places.filter((p) => p.words).map((p) => [p.id, p.words])), ...PLACE_WORDS };
+  for (const [id, words] of Object.entries(placeWords)) {
+    if (words.some(hit) && places.some((p) => p.id === id)) {
       set.placeId = id;
       understood.push(id === 'here' ? 'Charge near me' : `Going to ${places.find((p) => p.id === id).name}`);
       break;
