@@ -6,7 +6,8 @@ import { priceAt } from '../engine/pricing.js';
 import { isOpenToVisitors } from '../engine/sharing.js';
 import { occupancyAt } from '../engine/occupancy.js';
 import { buildSession } from '../engine/insights.js';
-import { describeCharger, priceComparison } from '../engine/detail.js';
+import { describeCharger, priceComparison, availability, monthSummary } from '../engine/detail.js';
+import { distanceKm } from '../engine/geo.js';
 import { bestWindow } from '../engine/schedule.js';
 import { parseRequest } from '../engine/assistant.js';
 import { planTrip } from '../engine/trip.js';
@@ -20,6 +21,16 @@ const BUDGETS = [['', 'Any price'], ['0.9', 'Up to RM0.90/kWh'], ['1', 'Up to RM
 const OPERATORS = ['Gentari', 'ChargEV', 'JomCharge', 'Tesla'];
 const noPrefs = () => ({ maxPrice: null, fastOnly: false, operator: null });
 const ALL_PLACES = [...PLACES, ...TRIP_PLACES];
+const svg = (d, cls = 'ic') => `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true"><path d="${d}"/></svg>`;
+const IC = {
+  bolt: svg('M13 2 4 14h6l-1 8 9-12h-6z', 'ic fill'),
+  pin: svg('M12 21s-7-6.1-7-11a7 7 0 0 1 14 0c0 4.9-7 11-7 11zm0-8.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5z'),
+  nav: svg('M3 11 21 3l-8 18-2-8-8-2z'),
+  clock: svg('M12 7v5l3 2M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z'),
+  home: svg('M4 11 12 4l8 7v9h-5v-6H9v6H4z'),
+};
+const availChip = (ch, occ) => { const a = availability(ch, occ); return `<span class="chip avail ${a.free ? 'on' : 'warn'}">${ch.type} ${a.free}/${a.total} free</span>`; };
+const navUrl = (ch) => `https://www.google.com/maps/dir/?api=1&destination=${ch.lat},${ch.lng}`;
 const placeOf = (id) => ALL_PLACES.find((p) => p.id === id) || PLACES[0];
 const fresh = () => ({ carId: 'emas7', battery: 35, placeId: 'klem', homeId: '', parkFor: '30m', stage: 'pick', pick: null, flash: '', pending: null, plate: '', selected: null, prefs: noPrefs(), ask: '', askNote: '', arriveMin: 20 });
 let ui = fresh();
@@ -204,6 +215,38 @@ function tripHtml(t, place, ctx) {
     <div class="btn-row"><a class="btn primary" href="${esc(t.directionsUrl)}" target="_blank" rel="noopener">Get directions</a></div>`;
 }
 
+// "Condo bays near you": every pilot condo, sideways-scrolling cards like a CPO app's Nearby list.
+function condosHtml(ctx) {
+  const origin = START;
+  const cards = ctx.world.chargers.filter((ch) => ch.siteType === 'condo').map((ch) => {
+    const condo = ctx.world.condos.find((c) => c.id === ch.condoId);
+    const mine = condo.id === ui.homeId;
+    const occ = occupancyAt(ch, ctx.clock, condo).total;
+    const open = isOpenToVisitors(condo, ctx.clock);
+    const s = condo.sharing;
+    const status = mine ? `<span class="chip">${IC.home}Your condo</span>`
+      : open ? `<span class="chip on">Shared now until ${s.end}:00</span>`
+        : `<span class="chip">${IC.clock}${s.enabled ? `Visitors ${s.start}:00–${s.end}:00 ${s.days === 'all' ? 'daily' : s.days}` : 'Residents only'}</span>`;
+    const km = distanceKm(origin, ch);
+    return { km, html: `<button class="ccard" type="button" data-detail="${esc(ch.id)}">
+      <b>${esc(condo.name)}</b>
+      <span class="facts">${availChip(ch, occ)}<span>${IC.pin}${km.toFixed(1)} km</span>${ch.live ? '<span class="live-tag" title="Live from the chargers (OCPP)"><span class="live-dot"></span>Live</span>' : ''}</span>
+      <span class="price">${rm(priceAt(ch, ctx.clock, condo, mine))}/kWh ${mine ? 'resident' : 'visitor'} price</span>
+      ${status}</button>` };
+  }).sort((a, b) => a.km - b.km);
+  return `<section class="condos" aria-label="Condo bays near you"><h3>Condo bays near you</h3>
+    <div class="ccards">${cards.map((c) => c.html).join('')}</div></section>`;
+}
+
+// The driver's own month, like the operator apps' "Insights this month".
+function monthHtml(ctx) {
+  const m = monthSummary(ctx.state.sessions, ctx.clock);
+  return `<section class="month" aria-label="Your month"><h3>Your ${esc(ctx.clock.toLocaleString('en-MY', { month: 'long' }))}</h3>
+    <div class="mstats"><div><b>${m.sessions}</b><span>sessions</span></div><div><b>${m.kWh.toFixed(1)}</b><span>kWh charged</span></div>
+    <div><b>${rm(m.paidRm)}</b><span>paid</span></div><div><b>${Math.round(m.co2Kg)} kg</b><span>CO₂ avoided</span></div></div>
+    ${m.sessions ? '' : '<p class="muted">Book a charge and it shows up here.</p>'}</section>`;
+}
+
 function compareHtml(r) {
   const rows = priceComparison(r.results);
   if (rows.length < 2) return '';
@@ -233,15 +276,30 @@ function pickHtml(r, ctx) {
     return `${head}<p class="empty">No charger is in range at ${ui.battery}%.${hint} Call your roadside assistance for a mobile charge.</p>`;
   }
   const note = r.balanceNote ? `<p class="balance"><b>Demand balancing.</b> ${esc(r.balanceNote)}</p>` : '';
-  const cards = top.map((c, i) => `
-    <article class="pick ${i === 0 ? 'first' : ''}">
-      <div class="pick-top"><span class="rank">${i + 1}</span>
-        <div><h3>${esc(c.charger.name)}</h3>
-        <p class="muted">${esc(c.charger.operator)} · ${c.charger.type} ${c.charger.kw} kW · ${rm(c.price)}/kWh${c.charger.priceEstimated ? ' (est.)' : ''}</p></div></div>
+  const facts = (c) => `<div class="facts">${availChip(c.charger, c.occupancy)}
+        <span>${IC.pin}${c.km < 1 ? `${Math.round(c.km * 1000)} m` : `${c.km.toFixed(1)} km`}</span>
+        <span>${IC.bolt}${c.charger.kw} kW</span>
+        <span class="price">${rm(c.price)}/kWh${c.charger.priceEstimated ? ' est.' : ''}</span>
+        ${c.isSharedVisit ? '<span class="chip on">Shared now</span>' : ''}${c.isResident ? `<span class="chip">${IC.home}Your condo</span>` : ''}</div>`;
+  const cards = top.map((c, i) => (i === 0 ? `
+    <article class="pick hero">
+      <p class="eyebrow-tag">CasCas pick</p>
+      <h3>${esc(c.charger.name)}</h3>
+      <p class="muted">${esc(c.charger.operator)} · ${esc(c.charger.connectors.join(', '))}</p>
+      ${facts(c)}
       <ul class="reasons">${c.reasons.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>
-      <div class="btn-row"><button class="btn ${i === 0 ? 'primary' : ''}" type="button" data-book="${c.charger.id}">Book this bay</button>
-      <button class="btn small" type="button" data-detail="${c.charger.id}">Details</button></div>
-    </article>`).join('');
+      <div class="btn-row"><button class="btn primary grow" type="button" data-book="${c.charger.id}">Book this bay</button>
+      <a class="btn" href="${esc(navUrl(c.charger))}" target="_blank" rel="noopener">${IC.nav}Navigate</a>
+      <button class="btn" type="button" data-detail="${c.charger.id}">Details</button></div>
+    </article>` : `
+    <article class="pick">
+      <div class="pick-top"><span class="rank">${i + 1}</span>
+        <div><h3>${esc(c.charger.name)}</h3><p class="muted">${esc(c.charger.operator)}</p></div></div>
+      ${facts(c)}
+      <ul class="reasons">${c.reasons.slice(0, 3).map((x) => `<li>${esc(x)}</li>`).join('')}</ul>
+      <div class="btn-row"><button class="btn" type="button" data-book="${c.charger.id}">Book</button>
+      <button class="btn" type="button" data-detail="${c.charger.id}">Details</button></div>
+    </article>`)).join('');
   const off = r.excluded.length
     ? `<details class="excluded"><summary>${r.excluded.length} chargers not suitable right now</summary><ul>${r.excluded.map((x) => `<li>${esc(x.charger.name)}: ${esc(x.reason)}</li>`).join('')}</ul></details>`
     : '';
@@ -251,7 +309,7 @@ function pickHtml(r, ctx) {
     : '';
   const own = r.results.find((c) => c.isResident) || top[0];
   const timing = timingLine(own, ctx, own.full ? own.kWh : own.deliveredKwh);
-  return head + note + timing + `<div class="picks">${cards}</div>` + compareHtml(r) + more + off;
+  return head + note + timing + `<div class="picks">${cards}</div>` + condosHtml(ctx) + compareHtml(r) + more + off + monthHtml(ctx);
 }
 
 function stageHtml(ctx, r) {
@@ -410,6 +468,7 @@ async function book(root, ctx, ranking, c, car, visitor) {
     }
     pass = r.data.pass || null;
     bookingRef = { id: r.data.bookingId, cancelToken: r.data.cancelToken };
+    addSession(ctx.state, session);
   } else {
     addSession(ctx.state, session);
     if (visitor) {
@@ -461,7 +520,7 @@ function drawTrip(origin, t, place) {
   const pts = [[origin.lat, origin.lng], ...t.stops.map((s) => [s.charger.lat, s.charger.lng]), [place.lat, place.lng]];
   L.polyline(pts, { className: 'trip-line', weight: 5 }).addTo(tripLayer);
   for (const s of t.stops) {
-    L.marker([s.charger.lat, s.charger.lng], { icon: L.divIcon({ html: `<span class="pin pick">⚡ ${Math.round(s.arrivePct)}→${s.departPct}%</span>`, className: 'pin-wrap', iconSize: null }), title: s.charger.name })
+    L.marker([s.charger.lat, s.charger.lng], { icon: L.divIcon({ html: `<span class="pin pick">${IC.bolt}${Math.round(s.arrivePct)}→${s.departPct}%</span>`, className: 'pin-wrap', iconSize: null }), title: s.charger.name })
       .bindPopup(`<div class="pop"><b>${esc(s.charger.name)}</b><br>Charge ${Math.round(s.arrivePct)}% → ${s.departPct}% · ${formatDuration(s.minutes)}</div>`).addTo(tripLayer);
   }
   L.marker([place.lat, place.lng], { icon: L.divIcon({ html: `<span class="pin dest">${esc(place.name)}</span>`, className: 'pin-wrap', iconSize: null }) }).addTo(tripLayer);
@@ -495,7 +554,7 @@ function drawMarkers(root, ctx, origin, r, car) {
     const faulty = ch.reliability < 0.75;
     const cls = faulty ? 'busy' : top.has(ch.id) ? 'pick' : off.has(ch.id) ? 'off' : occ >= 0.8 ? 'busy' : 'ok';
     const shared = condo && !isRes && isOpenToVisitors(condo, ctx.clock) ? '<b class="tag">Shared now</b>' : '';
-    const html = `<span class="pin ${cls}">${ch.type === 'DC' ? '⚡' : ''}${rm(price)}${shared}</span>`;
+    const html = `<span class="pin ${cls}">${ch.type === 'DC' ? IC.bolt : ''}${rm(price)}${shared}</span>`;
     const marker = L.marker([ch.lat, ch.lng], { icon: L.divIcon({ html: html.replace('class="pin ', `class="pin ${ui.selected === ch.id ? 'sel ' : ''}`), className: 'pin-wrap', iconSize: null }), title: ch.name })
       .bindPopup(popupHtml(ch, price, !!shared), { maxWidth: 260 }).addTo(layer);
     marker.on('click', () => select(root, ctx, ch.id, false));

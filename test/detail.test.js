@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { describeCharger, priceComparison } from '../engine/detail.js';
+import { describeCharger, priceComparison, availability, monthSummary } from '../engine/detail.js';
 
 const wed11 = new Date(2026, 9, 21, 11);
 const charger = (extra = {}) => ({ id: 'a', name: 'KL East Mall DC', address: 'Jalan 1, KL', operator: 'Gentari', lat: 3.21, lng: 101.72,
@@ -68,4 +68,20 @@ test('price comparison lists every option cheapest first, with the gap to the ch
   assert.equal(rows[0].vsCheapest, 0);
   assert.equal(rows[1].vsCheapest, 10);
   assert.equal(rows[0].kind, 'AC 22 kW');
+});
+
+test('availability: free bays out of the total, never below zero', () => {
+  assert.deepEqual(availability({ bays: 4 }, 0.5), { free: 2, total: 4 });
+  assert.deepEqual(availability({ bays: 4 }, 0.6), { free: 1, total: 4 });
+  assert.deepEqual(availability({ bays: 2 }, 1.2), { free: 0, total: 2 });
+  assert.deepEqual(availability({}, 0.2), { free: 0, total: 0 });
+});
+
+test('month summary: sessions, energy, paid and CO2 for this month only', () => {
+  const at = (d) => new Date(2026, 9, d, 10).getTime();
+  const s = monthSummary([{ at: at(2), kWh: 20, costRm: 22 }, { at: at(15), kWh: 10, costRm: 9 }, { at: new Date(2026, 8, 30).getTime(), kWh: 50, costRm: 60 }], new Date(2026, 9, 21));
+  assert.equal(s.sessions, 2);
+  assert.equal(s.kWh, 30);
+  assert.equal(s.paidRm, 31);
+  assert.ok(s.co2Kg > 0);
 });
