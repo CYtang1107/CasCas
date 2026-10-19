@@ -28,6 +28,9 @@ const IC = {
   nav: svg('M3 11 21 3l-8 18-2-8-8-2z'),
   clock: svg('M12 7v5l3 2M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z'),
   home: svg('M4 11 12 4l8 7v9h-5v-6H9v6H4z'),
+  search: svg('M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14zm5-2 4 4'),
+  route: svg('M6 19a2 2 0 1 0 0-4 2 2 0 0 0 0 4zM18 9a2 2 0 1 0 0-4 2 2 0 0 0 0 4zM8 17h7a3 3 0 0 0 0-6H9a3 3 0 0 1 0-6h7'),
+  map: svg('M9 4 3 6v14l6-2 6 2 6-2V4l-6 2-6-2zM9 4v14M15 6v14'),
 };
 const availChip = (ch, occ) => { const a = availability(ch, occ); return `<span class="chip avail ${a.free ? 'on' : 'warn'}">${ch.type} ${a.free}/${a.total} free</span>`; };
 const navUrl = (ch) => `https://www.google.com/maps/dir/?api=1&destination=${ch.lat},${ch.lng}`;
@@ -39,26 +42,63 @@ let layer = null;
 let timer = null;
 let markers = new Map();
 let last = null; // latest { ranking, car }, for the detail panel
+let tab = 'home';
+let current = null; // { root, ctx } of the tab on screen, for the charging timer
 
 export function resetDriver() {
   stopTimer();
   ui = fresh();
 }
 
-export function renderDriver(root, ctx) {
-  stopTimer();
+// The driver side is four tabs, like the operator apps: Home, Map, Plan and Activity.
+// They share one state (ui), so a search on Home shows up in Plan, and a booking runs in Activity.
+export function renderDriver(root, ctx, which = 'home') {
+  tab = which;
+  current = { root, ctx };
   if (map) { map.remove(); map = null; }
   const { condos } = ctx.world;
-  root.innerHTML = `
-  <div class="driver">
-    <section class="panel trip" aria-label="Trip">
-      <h2>Plan a charge</h2>
-      <form id="d-ask" class="ask" novalidate>
-        <label class="field grow">Ask CasCas
-          <input id="d-ask-text" type="text" maxlength="200" autocomplete="off" placeholder="e.g. Atto 3 at 71%, going to Melaka, arrive with 23%  ·  or: 20%, KL East Mall for 2 hours, under RM1.20" value="${esc(ui.ask)}"></label>
-        <button class="btn primary" type="submit">Plan it</button>
+  const askForm = (big) => `<form id="d-ask" class="ask ${big ? 'big' : ''}" role="search" novalidate>
+        <label class="search"><span class="sr-only">Ask CasCas</span>${IC.search}
+          <input id="d-ask-text" type="search" maxlength="200" autocomplete="off" enterkeyhint="go" placeholder="Ask CasCas: “Atto 3 at 71%, going to Melaka”" value="${esc(ui.ask)}"></label>
+        <button class="btn primary" type="submit">Go</button>
       </form>
-      ${ui.askNote ? `<p class="ask-note" role="status">${esc(ui.askNote)}</p>` : ''}
+      ${ui.askNote ? `<p class="ask-note" role="status">${esc(ui.askNote)}</p>` : ''}`;
+  const mapRow = (cls) => `<div class="map-row ${cls}" id="d-map-row">
+      <section class="map-wrap">
+        <div id="d-map" class="map" aria-label="Map of chargers around KL East. Select a charger for details."></div>
+        <p id="d-map-fallback" class="notice" hidden>The map could not load. The list of picks still works.</p>
+      </section>
+      <aside id="d-detail" class="panel detail" aria-label="Charger details" aria-live="polite" hidden></aside>
+    </div>`;
+  const trip = summaryLine();
+
+  if (which === 'home') {
+    root.innerHTML = `
+    <div class="driver tab-home">
+      <section class="hello">
+        <p class="eyebrow">${esc(fmtTime(ctx.clock))} · KL East</p>
+        <h2>Where are you charging today?</h2>
+        ${askForm(true)}
+      </section>
+      <nav class="quick" aria-label="Shortcuts">
+        <a href="#plan" data-quick="trip">${IC.route}<span>Plan a trip</span></a>
+        <a href="#plan" data-quick="fast">${IC.bolt}<span>Fast DC</span></a>
+        <a href="#map" data-quick="map">${IC.map}<span>Map</span></a>
+        <a href="#activity" data-quick="activity">${IC.clock}<span>Bookings</span></a>
+      </nav>
+      <div id="d-home-body" aria-live="polite"></div>
+    </div>`;
+  } else if (which === 'map') {
+    root.innerHTML = `<div class="driver tab-map">${mapRow('full')}
+      <p class="map-hint">${esc(trip)} · <a href="#plan">Change</a></p></div>`;
+  } else if (which === 'activity') {
+    root.innerHTML = '<div class="driver tab-activity"><section class="panel" id="d-activity" aria-live="polite"></section></div>';
+  } else {
+    root.innerHTML = `
+  <div class="driver tab-plan">
+    <section class="panel trip" aria-label="Trip">
+      <h2>Plan a charge or a trip</h2>
+      ${askForm(false)}
       <div class="fields">
       <label class="field">Car
         <select id="d-car">${CARS.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select></label>
@@ -71,7 +111,7 @@ export function renderDriver(root, ctx) {
         <input id="d-arrive" type="range" min="5" max="50" step="1"></label>
       <label class="field">I live at
         <select id="d-home"><option value="">Not a resident here</option>${condos.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select></label>
-      <fieldset class="field seg" id="d-park-wrap" ${placeOf(ui.placeId).trip ? "hidden" : ""}><legend>How long will you park?</legend>
+      <fieldset class="field seg" id="d-park-wrap" ${placeOf(ui.placeId).trip ? 'hidden' : ''}><legend>How long will you park?</legend>
         ${PARK_OPTIONS.map(([v, l]) => `<label><input type="radio" name="d-park" value="${v}"> ${l}</label>`).join('')}
       </fieldset>
       </div>
@@ -82,48 +122,101 @@ export function renderDriver(root, ctx) {
           <label class="field">Preferred operator <select id="d-op"><option value="">Any</option>${OPERATORS.map((o) => `<option>${o}</option>`).join('')}</select></label>
         </div>
       </details>
-      <p class="muted">Demo time: ${esc(fmtTime(ctx.clock))}. Change it at the top to see prices and sharing change.</p>
     </section>
-    <div class="map-row" id="d-map-row">
-      <section class="map-wrap">
-        <div id="d-map" class="map" aria-label="Map of chargers around KL East. Click a charger for details."></div>
-        <p id="d-map-fallback" class="notice" hidden>The map could not load. The list of picks still works.</p>
-      </section>
-      <aside id="d-detail" class="panel detail" aria-label="Charger details" aria-live="polite" hidden></aside>
-    </div>
+    ${mapRow('compact')}
     <section class="panel results" id="d-results" aria-live="polite"></section>
   </div>`;
+  }
 
   const $ = (sel) => root.querySelector(sel);
-  $('#d-car').value = ui.carId;
-  $('#d-batt').value = ui.battery;
-  $('#d-place').value = ui.placeId;
-  $('#d-home').value = ui.homeId;
-  $(`input[name="d-park"][value="${ui.parkFor}"]`).checked = true;
-  $('#d-arrive').value = ui.arriveMin;
-  $('#d-arrive').addEventListener('input', (e) => { ui.arriveMin = Number(e.target.value); update(root, ctx); });
-  $('#d-budget').value = ui.prefs.maxPrice == null ? '' : String(ui.prefs.maxPrice);
-  $('#d-speed').value = ui.prefs.fastOnly ? 'fast' : 'any';
-  $('#d-op').value = ui.prefs.operator || '';
-  $('#d-budget').addEventListener('change', (e) => { ui.prefs.maxPrice = e.target.value ? Number(e.target.value) : null; update(root, ctx); });
-  $('#d-speed').addEventListener('change', (e) => { ui.prefs.fastOnly = e.target.value === 'fast'; update(root, ctx); });
-  $('#d-op').addEventListener('change', (e) => { ui.prefs.operator = e.target.value || null; update(root, ctx); });
-  $('#d-ask').addEventListener('submit', (e) => { e.preventDefault(); ask(root, ctx, $('#d-ask-text').value); });
+  $('#d-ask')?.addEventListener('submit', (e) => { e.preventDefault(); ask(root, ctx, $('#d-ask-text').value); });
+  root.querySelectorAll('[data-quick]').forEach((a) => a.addEventListener('click', () => {
+    if (a.dataset.quick === 'fast') ui.prefs.fastOnly = true;
+    if (a.dataset.quick === 'trip' && !placeOf(ui.placeId).trip) ui.placeId = 'melaka';
+  }));
+  if (which === 'plan') {
+    $('#d-car').value = ui.carId;
+    $('#d-batt').value = ui.battery;
+    $('#d-place').value = ui.placeId;
+    $('#d-home').value = ui.homeId;
+    $(`input[name="d-park"][value="${ui.parkFor}"]`).checked = true;
+    $('#d-arrive').value = ui.arriveMin;
+    $('#d-arrive').addEventListener('input', (e) => { ui.arriveMin = Number(e.target.value); update(root, ctx); });
+    $('#d-budget').value = ui.prefs.maxPrice == null ? '' : String(ui.prefs.maxPrice);
+    $('#d-speed').value = ui.prefs.fastOnly ? 'fast' : 'any';
+    $('#d-op').value = ui.prefs.operator || '';
+    $('#d-budget').addEventListener('change', (e) => { ui.prefs.maxPrice = e.target.value ? Number(e.target.value) : null; update(root, ctx); });
+    $('#d-speed').addEventListener('change', (e) => { ui.prefs.fastOnly = e.target.value === 'fast'; update(root, ctx); });
+    $('#d-op').addEventListener('change', (e) => { ui.prefs.operator = e.target.value || null; update(root, ctx); });
+    $('#d-car').addEventListener('change', (e) => { ui.carId = e.target.value; update(root, ctx); });
+    $('#d-batt').addEventListener('input', (e) => { ui.battery = Number(e.target.value); update(root, ctx); });
+    $('#d-place').addEventListener('change', (e) => {
+      ui.placeId = e.target.value;
+      $('#d-arrive-wrap').hidden = !placeOf(ui.placeId).trip;
+      $('#d-park-wrap').hidden = placeOf(ui.placeId).trip;
+      update(root, ctx);
+    });
+    $('#d-home').addEventListener('change', (e) => { ui.homeId = e.target.value; update(root, ctx); });
+    root.querySelectorAll('input[name="d-park"]').forEach((r) => r.addEventListener('change', (e) => { ui.parkFor = e.target.value; update(root, ctx); }));
+  }
 
-  $('#d-car').addEventListener('change', (e) => { ui.carId = e.target.value; update(root, ctx); });
-  $('#d-batt').addEventListener('input', (e) => { ui.battery = Number(e.target.value); update(root, ctx); });
-  $('#d-place').addEventListener('change', (e) => {
-    ui.placeId = e.target.value;
-    $('#d-arrive-wrap').hidden = !placeOf(ui.placeId).trip;
-    $('#d-park-wrap').hidden = placeOf(ui.placeId).trip;
-    update(root, ctx);
-  });
-  $('#d-home').addEventListener('change', (e) => { ui.homeId = e.target.value; update(root, ctx); });
-  root.querySelectorAll('input[name="d-park"]').forEach((r) => r.addEventListener('change', (e) => { ui.parkFor = e.target.value; update(root, ctx); }));
-
-  initMap($('#d-map'), $('#d-map-fallback'));
+  if ($('#d-map')) initMap($('#d-map'), $('#d-map-fallback'));
   update(root, ctx);
-  if (ui.stage === 'charging') startTimer(root, ctx);
+  if (which === 'map' && ui.selected) focusSelected();
+  if (ui.stage === 'charging' && !timer) startTimer();
+}
+
+// "e.MAS 7 · 35% · to KL East Mall · 30 min": what the picks are for.
+function summaryLine() {
+  const car = CARS.find((c) => c.id === ui.carId);
+  const place = placeOf(ui.placeId);
+  const stay = place.trip ? `arrive with ${ui.arriveMin}%` : PARK_OPTIONS.find(([v]) => v === ui.parkFor)[1].toLowerCase();
+  return `${car.name} · ${ui.battery}% · to ${place.name} · ${stay}`;
+}
+
+// Home: the one best charger for the current settings (or the trip), condo bays nearby, your month.
+function homeHtml(r, ctx, trip, place) {
+  const flash = ui.flash ? `<p class="flash">${esc(ui.flash)}</p>` : '';
+  const active = ui.stage !== 'pick' && ui.pick
+    ? `<a class="banner" href="#activity">${IC.bolt}<span><b>${ui.stage === 'charging' ? 'Charging now' : 'Bay held'}</b> at ${esc(ui.pick.name)}</span><span aria-hidden="true">›</span></a>` : '';
+  const head = `<div class="sec-head"><h3>${trip ? `Your trip to ${esc(place.name)}` : 'Best for you now'}</h3><a href="#plan">Change</a></div>
+    <p class="muted">${esc(summaryLine())}</p>`;
+  let main;
+  if (trip) {
+    main = trip.ok
+      ? `<a class="pick hero trip-hero" href="#plan"><p class="eyebrow-tag">Trip plan</p><h3>${formatDuration(trip.totals.totalMin)} · ${Math.round(trip.totals.km)} km</h3>
+          <p>${trip.stops.length ? `${trip.stops.length} charge stop${trip.stops.length === 1 ? '' : 's'}, ${formatDuration(trip.totals.chargeMin)} charging` : 'No charge stop needed'} · arrive with ${Math.round(trip.arrivePct)}%</p>
+          <span class="btn primary">Open the plan</span></a>`
+      : `<p class="empty">${esc(trip.error)}</p>`;
+  } else if (r.kWh < 1) {
+    main = `<p class="empty">Your battery is at ${ui.battery}%. No charge needed for this trip.</p>`;
+  } else if (!r.results.length) {
+    main = `<p class="empty">No charger fits right now. <a href="#plan">Change your trip or preferences</a>.</p>`;
+  } else {
+    main = heroCard(r.results[0]);
+  }
+  return active + flash + `<section class="home-pick">${head}${main}</section>` + condosHtml(ctx) + monthHtml(ctx);
+}
+
+// Activity: the booking or charge in progress, otherwise your history.
+function activityHtml(ctx, r) {
+  if (ui.stage !== 'pick') return stageHtml(ctx, r);
+  const flash = ui.flash ? `<p class="flash">${esc(ui.flash)}</p>` : '';
+  const name = (id) => ctx.world.chargers.find((c) => c.id === id)?.name || id;
+  const list = [...ctx.state.sessions].sort((a, b) => b.at - a.at).slice(0, 10);
+  const source = document.getElementById('data-source')?.textContent || '';
+  const mode = document.getElementById('data-mode')?.textContent || '';
+  return `${flash}<h2>Activity</h2>
+    <div class="empty-state">${IC.bolt}<p><b>No booking right now.</b> Book a bay from Home or Plan and it appears here: the hold, the QR code and the live charge.</p>
+      <div class="btn-row"><a class="btn primary" href="#home">Find a charger</a><a class="btn" href="#plan">Plan a trip</a></div></div>
+    ${monthHtml(ctx)}
+    <section class="history"><h3>Recent sessions</h3>
+      ${list.length ? `<ul class="hist">${list.map((x) => `<li><div><b>${esc(name(x.chargerId))}</b><span class="muted">${esc(fmtTime(new Date(x.at)))} · ${x.kWh.toFixed(1)} kWh</span></div><b class="price">${rm(x.costRm)}</b></li>`).join('')}</ul>`
+        : '<p class="muted">No sessions on this device yet.</p>'}
+    </section>
+    <section class="about"><h3>About this demo</h3>
+      <p class="muted">${esc(source)}${mode ? ` · ${esc(mode)}` : ''}. Condo bays, occupancy and history are simulated; condo names are fictional.</p>
+      <button class="btn" type="button" data-reset>Reset demo</button></section>`;
 }
 
 function compute(ctx) {
@@ -145,13 +238,15 @@ function compute(ctx) {
 
 function update(root, ctx) {
   const { car, origin, ranking, trip, place } = compute(ctx);
-  root.querySelector('#d-batt-out').textContent = `${ui.battery}%`;
-  root.querySelector('#d-arrive-out').textContent = `${ui.arriveMin}%`;
+  const $ = (sel) => root.querySelector(sel);
+  if ($('#d-batt-out')) $('#d-batt-out').textContent = `${ui.battery}%`;
+  if ($('#d-arrive-out')) $('#d-arrive-out').textContent = `${ui.arriveMin}%`;
   last = { ranking, car };
   drawMarkers(root, ctx, origin, ranking, car);
   drawTrip(origin, trip, place);
-  const box = root.querySelector('#d-results');
-  box.innerHTML = trip && ui.stage === 'pick' ? tripHtml(trip, place, ctx) : ui.stage === 'pick' ? pickHtml(ranking, ctx) : stageHtml(ctx, ranking);
+  if ($('#d-results')) $('#d-results').innerHTML = trip ? tripHtml(trip, place, ctx) : pickHtml(ranking, ctx);
+  if ($('#d-home-body')) $('#d-home-body').innerHTML = homeHtml(ranking, ctx, trip, place);
+  if ($('#d-activity')) $('#d-activity').innerHTML = activityHtml(ctx, ranking);
   bind(root, ctx, ranking, car);
   renderDetail(root, ctx, ranking, car);
 }
@@ -173,10 +268,11 @@ function ask(root, ctx, text) {
   if ('fastOnly' in set) ui.prefs.fastOnly = set.fastOnly;
   if ('operator' in set) ui.prefs.operator = set.operator;
   ui.askNote = understood.length
-    ? `Understood: ${understood.join(' · ')}. ${placeOf(ui.placeId).trip ? 'Your trip plan is below.' : 'The picks below use these settings.'}`
+    ? `Understood: ${understood.join(' · ')}.`
     : 'Sorry, I could not find a battery level, place, stay or preference in that. Try "40%, going to KLCC for 2 hours".';
-  ui.stage = 'pick';
-  renderDriver(root, ctx);
+  if (ui.stage === 'plate') ui.stage = 'pick';
+  if (location.hash !== '#plan') location.hash = '#plan';
+  else renderDriver(root, ctx, 'plan');
 }
 
 // When should the driver charge at this site? The cheapest open hour in the next 24 h.
@@ -263,6 +359,38 @@ function modeLine(mode) {
   return 'Balancing price, time and reliability';
 }
 
+const facts = (c) => `<div class="facts">${availChip(c.charger, c.occupancy)}
+        <span>${IC.pin}${c.km < 1 ? `${Math.round(c.km * 1000)} m` : `${c.km.toFixed(1)} km`}</span>
+        <span>${IC.bolt}${c.charger.kw} kW</span>
+        <span class="price">${rm(c.price)}/kWh${c.charger.priceEstimated ? ' est.' : ''}</span>
+        ${c.isSharedVisit ? '<span class="chip on">Shared now</span>' : ''}${c.isResident ? `<span class="chip">${IC.home}Your condo</span>` : ''}</div>`;
+
+function heroCard(c) {
+  return `
+    <article class="pick hero">
+      <p class="eyebrow-tag">CasCas pick</p>
+      <h3>${esc(c.charger.name)}</h3>
+      <p class="muted">${esc(c.charger.operator)} · ${esc(c.charger.connectors.join(', '))}</p>
+      ${facts(c)}
+      <ul class="reasons">${c.reasons.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>
+      <div class="btn-row"><button class="btn primary grow" type="button" data-book="${c.charger.id}">Book this bay</button>
+      <a class="btn" href="${esc(navUrl(c.charger))}" target="_blank" rel="noopener">${IC.nav}Navigate</a>
+      <button class="btn" type="button" data-detail="${c.charger.id}">On map</button></div>
+    </article>`;
+}
+
+function smallCard(c, i) {
+  return `
+    <article class="pick">
+      <div class="pick-top"><span class="rank">${i + 1}</span>
+        <div><h3>${esc(c.charger.name)}</h3><p class="muted">${esc(c.charger.operator)}</p></div></div>
+      ${facts(c)}
+      <ul class="reasons">${c.reasons.slice(0, 3).map((x) => `<li>${esc(x)}</li>`).join('')}</ul>
+      <div class="btn-row"><button class="btn" type="button" data-book="${c.charger.id}">Book</button>
+      <button class="btn" type="button" data-detail="${c.charger.id}">On map</button></div>
+    </article>`;
+}
+
 function pickHtml(r, ctx) {
   const flash = ui.flash ? `<p class="flash">${esc(ui.flash)}</p>` : '';
   const head = `${flash}<div class="res-head"><h2>Best picks</h2><span class="mode mode-${r.mode}">${MODES[r.mode].label}</span></div>
@@ -276,30 +404,7 @@ function pickHtml(r, ctx) {
     return `${head}<p class="empty">No charger is in range at ${ui.battery}%.${hint} Call your roadside assistance for a mobile charge.</p>`;
   }
   const note = r.balanceNote ? `<p class="balance"><b>Demand balancing.</b> ${esc(r.balanceNote)}</p>` : '';
-  const facts = (c) => `<div class="facts">${availChip(c.charger, c.occupancy)}
-        <span>${IC.pin}${c.km < 1 ? `${Math.round(c.km * 1000)} m` : `${c.km.toFixed(1)} km`}</span>
-        <span>${IC.bolt}${c.charger.kw} kW</span>
-        <span class="price">${rm(c.price)}/kWh${c.charger.priceEstimated ? ' est.' : ''}</span>
-        ${c.isSharedVisit ? '<span class="chip on">Shared now</span>' : ''}${c.isResident ? `<span class="chip">${IC.home}Your condo</span>` : ''}</div>`;
-  const cards = top.map((c, i) => (i === 0 ? `
-    <article class="pick hero">
-      <p class="eyebrow-tag">CasCas pick</p>
-      <h3>${esc(c.charger.name)}</h3>
-      <p class="muted">${esc(c.charger.operator)} · ${esc(c.charger.connectors.join(', '))}</p>
-      ${facts(c)}
-      <ul class="reasons">${c.reasons.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>
-      <div class="btn-row"><button class="btn primary grow" type="button" data-book="${c.charger.id}">Book this bay</button>
-      <a class="btn" href="${esc(navUrl(c.charger))}" target="_blank" rel="noopener">${IC.nav}Navigate</a>
-      <button class="btn" type="button" data-detail="${c.charger.id}">Details</button></div>
-    </article>` : `
-    <article class="pick">
-      <div class="pick-top"><span class="rank">${i + 1}</span>
-        <div><h3>${esc(c.charger.name)}</h3><p class="muted">${esc(c.charger.operator)}</p></div></div>
-      ${facts(c)}
-      <ul class="reasons">${c.reasons.slice(0, 3).map((x) => `<li>${esc(x)}</li>`).join('')}</ul>
-      <div class="btn-row"><button class="btn" type="button" data-book="${c.charger.id}">Book</button>
-      <button class="btn" type="button" data-detail="${c.charger.id}">Details</button></div>
-    </article>`)).join('');
+  const cards = top.map((c, i) => (i === 0 ? heroCard(c) : smallCard(c, i))).join('');
   const off = r.excluded.length
     ? `<details class="excluded"><summary>${r.excluded.length} chargers not suitable right now</summary><ul>${r.excluded.map((x) => `<li>${esc(x.charger.name)}: ${esc(x.reason)}</li>`).join('')}</ul></details>`
     : '';
@@ -309,7 +414,7 @@ function pickHtml(r, ctx) {
     : '';
   const own = r.results.find((c) => c.isResident) || top[0];
   const timing = timingLine(own, ctx, own.full ? own.kWh : own.deliveredKwh);
-  return head + note + timing + `<div class="picks">${cards}</div>` + condosHtml(ctx) + compareHtml(r) + more + off + monthHtml(ctx);
+  return head + note + timing + `<div class="picks">${cards}</div>` + compareHtml(r) + more + off;
 }
 
 function stageHtml(ctx, r) {
@@ -380,7 +485,8 @@ function savingLine(p) {
 }
 
 function bind(root, ctx, ranking, car) {
-  const box = root.querySelector('#d-results');
+  const box = root;
+  root.querySelector('[data-reset]')?.addEventListener('click', () => document.getElementById('reset')?.click());
   box.querySelectorAll('[data-book]').forEach((btn) => btn.addEventListener('click', () => startBooking(root, ctx, ranking, car, btn.dataset.book)));
   box.querySelectorAll('[data-detail]').forEach((btn) => btn.addEventListener('click', () => select(root, ctx, btn.dataset.detail, true)));
   const form = box.querySelector('#d-plate-form');
@@ -390,8 +496,8 @@ function bind(root, ctx, ranking, car) {
     form.addEventListener('submit', (e) => { e.preventDefault(); confirmVisitor(root, ctx, ranking, car, form); });
   }
   const act = (name, fn) => { const b = box.querySelector(`[data-act="${name}"]`); if (b) b.addEventListener('click', fn); };
-  act('back', () => { ui.stage = 'pick'; ui.pending = null; update(root, ctx); });
-  act('start', () => { ui.stage = 'charging'; update(root, ctx); startTimer(root, ctx); });
+  act('back', () => { ui.stage = 'pick'; ui.pending = null; location.hash = '#plan'; });
+  act('start', () => { ui.stage = 'charging'; update(root, ctx); startTimer(); });
   act('cancel', async () => {
     const p = ui.pick;
     if (ctx.api && p?.bookingRef) {
@@ -429,7 +535,7 @@ function startBooking(root, ctx, ranking, car, id) {
   const c = ranking.results.find((x) => x.charger.id === id);
   if (!c) return;
   ui.flash = '';
-  if (c.isSharedVisit) { ui.stage = 'plate'; ui.pending = c.charger.id; update(root, ctx); return; }
+  if (c.isSharedVisit) { ui.stage = 'plate'; ui.pending = c.charger.id; goActivity(root, ctx); return; }
   book(root, ctx, ranking, c, car, null);
 }
 
@@ -488,10 +594,17 @@ async function book(root, ctx, ranking, c, car, visitor) {
   ui.stage = 'booked';
   ctx.state.booking = { chargerId: c.charger.id, at: ctx.clock.getTime() };
   ctx.save();
-  if (ctx.api) ctx.refresh(); else update(root, ctx);
+  goActivity(root, ctx);
+  if (ctx.api) ctx.refresh();
 }
 
-function startTimer(root, ctx) {
+// Bookings and charging live on the Activity tab.
+function goActivity(root, ctx) {
+  if (location.hash !== '#activity') location.hash = '#activity';
+  else update(root, ctx);
+}
+
+function startTimer() {
   stopTimer();
   timer = setInterval(() => {
     const p = ui.pick;
@@ -499,9 +612,7 @@ function startTimer(root, ctx) {
     p.session.minutes += 1;
     p.session.kWh = Math.min(p.kWhTarget, p.session.kWh + p.power / 60);
     if (p.session.kWh >= p.kWhTarget) { stopTimer(); ui.stage = 'done'; }
-    const box = root.querySelector('#d-results');
-    if (!box) { stopTimer(); return; }
-    update(root, ctx);
+    if (current?.root.querySelector('#d-activity')) update(current.root, current.ctx);
   }, 1000);
 }
 
@@ -570,6 +681,7 @@ function drawMarkers(root, ctx, origin, r, car) {
 
 function select(root, ctx, id, fromList) {
   ui.selected = id;
+  if (tab !== 'map' && tab !== 'plan') { location.hash = '#map'; return; }
   if (!last) return;
   renderDetail(root, ctx, last.ranking, last.car);
   if (fromList && map) {
@@ -577,6 +689,11 @@ function select(root, ctx, id, fromList) {
     if (m) { map.setView(m.getLatLng(), Math.max(map.getZoom(), 15)); m.openPopup(); }
     root.querySelector('#d-map-row')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
+}
+
+function focusSelected() {
+  const m = markers.get(ui.selected);
+  if (m && map) { map.setView(m.getLatLng(), Math.max(map.getZoom(), 15)); m.openPopup(); }
 }
 
 function renderDetail(root, ctx, ranking, car) {

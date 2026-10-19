@@ -10,7 +10,8 @@ import { faultBays } from './engine/maintenance.js';
 import { renderDriver, resetDriver } from './views/driver.js';
 import { renderJmb } from './views/jmb.js';
 
-const VIEWS = { driver: renderDriver, jmb: renderJmb };
+const tabView = (name) => (root, ctx) => renderDriver(root, ctx, name);
+const VIEWS = { home: tabView('home'), map: tabView('map'), plan: tabView('plan'), activity: tabView('activity'), jmb: renderJmb };
 let state = loadState();
 state.visitorPasses = purgePasses(state.visitorPasses, Date.now());
 saveState(state);
@@ -31,7 +32,7 @@ function localFaultBays() {
 
 function currentRole() {
   const id = location.hash.slice(1);
-  return VIEWS[id] ? id : 'driver';
+  return VIEWS[id] ? id : 'home'; // old #driver links land on Home
 }
 
 function render() {
