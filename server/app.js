@@ -11,6 +11,7 @@ import { validateSharing } from '../engine/sharing.js';
 import { followRate, savings, overstayTotals } from '../engine/insights.js';
 import { validateEntry, cleanEntry, faultBays } from '../engine/maintenance.js';
 import { createStore } from './store.js';
+import { createCsms } from './ocpp.js';
 import { createAuth } from './auth.js';
 import { cleanSession, cleanBooking, cleanCheckin, cleanSharing } from './validate.js';
 
@@ -41,12 +42,16 @@ function chargerSource({ dataDir, fetchFn, key, now }) {
   };
 }
 
-export function createApp({ dataDir, secret, pins, ocmKey = '', fetchFn = globalThis.fetch, now = () => Date.now() }) {
+export function createApp({ dataDir, secret, pins, ocmKey = '', ocppPassword = crypto.randomBytes(16).toString('hex'), fetchFn = globalThis.fetch, now = () => Date.now() }) {
   const store = createStore(dataDir);
+  const csms = createCsms({ store, condos: CONDOS, password: ocppPassword, now });
   const auth = createAuth({ secret, pins, now });
   const chargers = chargerSource({ dataDir, fetchFn, key: ocmKey, now });
   const app = express();
   app.disable('x-powered-by');
+  // OCPP chargers connect over WebSocket: call app.locals.attachOcpp(httpServer) after listen().
+  app.locals.attachOcpp = (server) => csms.attach(server);
+  app.locals.sim = null;
 
   const condoWithSharing = (id) => {
     const c = CONDOS.find((x) => x.id === id);
@@ -76,7 +81,7 @@ export function createApp({ dataDir, secret, pins, ocmKey = '', fetchFn = global
       const n = faultBays(store.data.maintenance[c.id] || [], c.bays);
       if (n) out[`cs-${c.id}`] = n;
     }
-    res.json({ sharing: store.data.sharing, checkins: store.data.checkins, activeBays, faultBays: out });
+    res.json({ sharing: store.data.sharing, checkins: store.data.checkins, activeBays, faultBays: out, live: csms.summaries() });
   });
 
   app.post('/api/bookings', (req, res) => {
@@ -172,6 +177,21 @@ export function createApp({ dataDir, secret, pins, ocmKey = '', fetchFn = global
     store.data.sharing[condo.id] = next;
     store.save();
     res.json({ sharing: next });
+  });
+
+  // Live OCPP status of a condo's bays: no personal data, so it is public like the map.
+  app.get('/api/ocpp/:condoId', (req, res) => {
+    if (!condoWithSharing(req.params.condoId)) return bad(res, 'Unknown condo', 404);
+    res.json({ ...csms.snapshot(req.params.condoId), simulated: !!app.locals.sim });
+  });
+
+  // Demo control: make a simulated charger report a fault, or come back.
+  app.post('/api/jmb/:condoId/ocpp/:bay', requireJmb, (req, res) => {
+    const action = req.body?.action;
+    if (!['fault', 'clear'].includes(action)) return bad(res, 'Action must be fault or clear');
+    if (!app.locals.sim) return bad(res, 'The charger simulator is not running', 409);
+    if (!app.locals.sim.inject(req.params.condoId, Number(req.params.bay), action)) return bad(res, 'That charger is not connected', 409);
+    res.json({ ok: true });
   });
 
   app.use('/api', (req, res) => bad(res, 'Not found', 404));

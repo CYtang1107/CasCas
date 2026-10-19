@@ -504,6 +504,7 @@ function detailHtml(d, timing = '') {
       <div><dt>Wait</dt><dd>${d.waitMin ? `~${d.waitMin} min` : 'None'}</dd></div>
     </dl>
     ${notes.length ? `<p class="muted">${notes.map(esc).join(' · ')}</p>` : ''}
+    ${d.live ? `<p class="live-line"><span class="dot"></span>Live from the chargers (OCPP): ${d.live.charging} charging · ${d.live.available} free${d.live.faulted ? ` · ${d.live.faulted} faulted` : ''}${d.live.offline ? ` · ${d.live.offline} offline` : ''}</p>` : ''}
     ${timing}
     ${d.reasons.length ? `<h4>For your trip</h4><ul class="reasons">${d.reasons.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}
     <h4>Recent check-ins (${d.checkinCount})</h4>

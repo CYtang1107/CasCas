@@ -44,6 +44,7 @@ export function describeCharger({ charger, ranking, condo = null, date, isReside
     bays: charger.bays,
     pilot: !!charger.pilot,
     faultBays: charger.faultBays || 0,
+    live: charger.live || null,
     priceNow: r ? r.price : priceAt(charger, date, condo, isResident),
     priceEstimated: !!charger.priceEstimated,
     priceNote: priceNote(charger, date, condo),

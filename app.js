@@ -17,7 +17,7 @@ saveState(state);
 let clock = CLOCK_PRESETS[0].date();
 let chargers = null; // set once chargers are loaded
 let api = null; // set in shared mode (a CasCas server answered)
-let shared = { sharing: {}, checkins: {}, activeBays: {}, faultBays: {} };
+let shared = { sharing: {}, checkins: {}, activeBays: {}, faultBays: {}, live: {} };
 
 // Bays the JMB logged as faulty (and not yet repaired) count as taken for drivers.
 function localFaultBays() {
@@ -48,7 +48,8 @@ function render() {
   const list = chargers.map((ch) => {
     const fault = faults[ch.id] || 0;
     const booked = api ? shared.activeBays[ch.id] || 0 : 0;
-    return fault || booked ? { ...ch, bookedBays: booked + fault, faultBays: fault } : ch;
+    const live = api ? shared.live?.[ch.id] || null : null;
+    return fault || booked || live ? { ...ch, bookedBays: booked + fault, faultBays: fault, live } : ch;
   });
   const ctx = { state, clock, api, checkins: worldState.checkins, world: buildWorld(worldState, CONDOS, list), save: () => saveState(state), rerender: render, refresh };
   VIEWS[role](view, ctx);

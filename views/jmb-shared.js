@@ -9,6 +9,8 @@ const STALE_MS = 10000;
 const cache = new Map(); // condoId -> { data, summary, at, summaryAt, loading, summaryLoading, error }
 const tokenKey = (id) => `cascas.jmb.${id}`;
 
+export const forgetJmb = (condoId) => cache.delete(condoId);
+
 export function getToken(condoId) {
   try {
     const t = sessionStorage.getItem(tokenKey(condoId));

@@ -240,4 +240,11 @@ fieldset.plain:disabled { opacity: 0.6; }
   .ask { flex-direction: column; align-items: stretch; }
   .maintenance .row .grow { grid-column: auto; }
 }
+/* Live OCPP status */
+.live .bar { margin: 8px 0 12px; }
+.live-line { font-size: 0.88rem; display: flex; align-items: center; gap: 8px; }
+.live-line .dot, .live .chip.on::before { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); display: inline-block; }
+.live .chip.on::before { content: ""; margin-right: 6px; }
+@media (prefers-reduced-motion: no-preference) { .live-line .dot { animation: pulse 1.6s ease-in-out infinite; } }
+@keyframes pulse { 50% { opacity: 0.3; } }
 [hidden] { display: none !important; } /* the hidden attribute must win over display rules like .detail { display: grid } */

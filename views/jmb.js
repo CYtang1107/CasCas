@@ -5,6 +5,7 @@ import { validateSharing } from '../engine/sharing.js';
 import { barChart24, lineChart } from './charts.js';
 import { esc, rm, rm0, num, pct, monthLabel } from './format.js';
 import { privateSection } from './jmb-shared.js';
+import { liveHtml, bindLive } from './jmb-live.js';
 import { recoveryHtml, quietHtml, maintenanceHtml, bindMaintenance, reportCsv, downloadCsv } from './jmb-ops.js';
 import { bayStatus, maintenanceCost } from '../engine/maintenance.js';
 import { filterSessions } from '../engine/insights.js';
@@ -95,6 +96,8 @@ export function renderJmb(root, ctx) {
       ${maintenanceHtml(condo, entries, priv.canEdit, ctx.clock)}
     </div>
 
+    ${liveHtml(condo, ctx)}
+
     <section class="card"><h3>Charger health</h3>
       <p class="muted">Reliability ${pct(charger.reliability)} · ${checkins.length} check-ins ${ctx.api ? 'shared by all drivers' : 'from drivers on this device'}.</p>
       <div class="tbl"><table>
@@ -139,6 +142,7 @@ export function renderJmb(root, ctx) {
   });
   priv.bind(root);
   bindMaintenance(root, condo, ctx, priv.addMaintenance);
+  bindLive(root, condo, ctx);
   $('#j-report').addEventListener('click', () => {
     const sessions = priv.sessions ? filterSessions(priv.sessions, { from: start.getTime(), to: monthEnd }).length : 'n/a (log in)';
     const month = start.toLocaleString('en-MY', { month: 'long', year: 'numeric' });
