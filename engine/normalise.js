@@ -24,7 +24,8 @@ export function normaliseOcm(poi) {
   const maxKw = Math.max(0, ...conns.map((c) => c.PowerKW || 0));
   const connectors = [...new Set(plugs.filter(Boolean))];
   const quantity = conns.reduce((s, c) => s + (c.Quantity || 0), 0);
-  const operator = poi.OperatorInfo?.Title || 'Unknown operator';
+  const title = poi.OperatorInfo?.Title;
+  const operator = !title || /unknown operator/i.test(title) ? 'Unknown operator' : title; // OCM spells it two ways
 
   return {
     id: `ocm-${poi.ID}`,

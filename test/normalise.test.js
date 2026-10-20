@@ -45,3 +45,12 @@ test('non-operational stations get low reliability; every charger is a public OC
     assert.ok(c.kw > 0 && c.connectors.length > 0);
   }
 });
+
+test('both of OCM spellings of an unknown operator become one', () => {
+  const base = JSON.parse(JSON.stringify(pois.find((p) => p.ID === 101)));
+  const named = (title) => normaliseOcm({ ...base, OperatorInfo: title === undefined ? undefined : { Title: title } }).operator;
+  assert.equal(named('(Unknown Operator)'), 'Unknown operator');
+  assert.equal(named('Unknown Operator'), 'Unknown operator');
+  assert.equal(named(undefined), 'Unknown operator');
+  assert.equal(named('Gentari'), 'Gentari');
+});
