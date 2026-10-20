@@ -96,6 +96,7 @@ export function createApp({ dataDir, secret, pins, ocmKey = '', ocppPassword = c
       const env = { world, car, origin, clock, homeId: home?.id || null, parkFor: c.parkFor, prefs: c.prefs || {} };
       res.json(await agent.ask({ text, history, env, context: { clock, carName: car.name, originName: origin.name, homeName: home?.name } }));
     } catch (e) {
+      console.warn('AI assistant failed:', e.message); // provider status and message, never the key
       bad(res, 'The AI assistant is unavailable right now', 502);
     }
   });

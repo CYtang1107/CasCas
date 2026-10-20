@@ -36,7 +36,9 @@ export function createAgent({ key, baseUrl = 'https://dashscope-intl.aliyuncs.co
           body: JSON.stringify({ model, messages, temperature: 0.2, max_tokens: 500, ...(useTools ? { tools: TOOLS, tool_choice: 'auto' } : {}) }),
         });
         if (!res.ok) {
-          lastErr = `${model}: HTTP ${res.status}`;
+          let why = '';
+          try { why = String(await res.text()).replace(/\s+/g, ' ').slice(0, 200); } catch { /* no body */ }
+          lastErr = `${model}: HTTP ${res.status} ${why}`;
           if (RETRY_STATUS.has(res.status)) continue;
           break;
         }
