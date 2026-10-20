@@ -15,6 +15,8 @@ import { searchKnowledge } from './kb.js';
 import { isTrip } from './geocode.js';
 
 const ALL_PLACES = [...PLACES.filter((p) => p.id !== 'here'), ...TRIP_PLACES];
+// Open Charge Map often has names IN CAPITALS; show them in title case.
+export const tidyName = (s) => (/[a-z]/.test(String(s)) ? String(s) : String(s).toLowerCase().replace(/\b([a-z])/g, (m) => m.toUpperCase()).replace(/\b(Dc|Ac|Kl|Lrt|Mrt|Ev|Tnb|Sdp)\b/g, (m) => m.toUpperCase()));
 const fn = (name, description, properties, required = []) => ({ type: 'function', function: { name, description, parameters: { type: 'object', properties, required } } });
 
 export const TOOLS = [
@@ -87,7 +89,7 @@ export function runTool(name, args, env) {
       return {
         mode: r.mode, charge_to_pct: r.target, kwh_needed: round2(r.kWh),
         picks: r.results.slice(0, 5).map((c) => ({
-          charger_id: c.charger.id, name: c.charger.name, operator: c.charger.operator, type: `${c.charger.type} ${c.charger.kw} kW`,
+          charger_id: c.charger.id, name: tidyName(c.charger.name), operator: c.charger.operator, type: `${c.charger.type} ${c.charger.kw} kW`,
           price_per_kwh: c.price, cost_rm: round2(c.full ? c.cost : c.deliveredKwh * c.price), kwh: round2(c.full ? c.kWh : c.deliveredKwh),
           distance_km: round2(c.km), reasons: c.reasons, shared_condo_bay: c.isSharedVisit, your_condo: c.isResident,
         })),
@@ -103,7 +105,7 @@ export function runTool(name, args, env) {
       return {
         ok: true, destination: dest.name, total_time: formatDuration(t.totals.totalMin), km: Math.round(t.totals.km),
         charging_time: formatDuration(t.totals.chargeMin), charging_cost_rm: t.totals.cost, arrive_pct: Math.round(t.arrivePct),
-        stops: t.stops.map((x) => ({ charger_id: x.charger.id, name: x.charger.name, arrive_pct: Math.round(x.arrivePct), leave_pct: x.departPct, minutes: Math.round(x.minutes), cost_rm: x.cost })),
+        stops: t.stops.map((x) => ({ charger_id: x.charger.id, name: tidyName(x.charger.name), arrive_pct: Math.round(x.arrivePct), leave_pct: x.departPct, minutes: Math.round(x.minutes), cost_rm: x.cost })),
         note: 'Distances are estimates; the Plan screen re-checks them on real roads with traffic.',
       };
     }
@@ -140,7 +142,7 @@ export function runTool(name, args, env) {
     case 'propose_booking': {
       const ch = env.world.chargers.find((c) => c.id === a.charger_id);
       if (!ch) return { error: 'Unknown charger_id' };
-      return { proposed: true, charger_id: ch.id, name: ch.name, note: 'A Book button is shown to the driver; nothing is booked until they tap it.' };
+      return { proposed: true, charger_id: ch.id, name: tidyName(ch.name), note: 'A Book button is shown to the driver; nothing is booked until they tap it.' };
     }
     case 'fill_trip_form': {
       const place = findPlace(a.destination);
@@ -181,7 +183,12 @@ export function amountsGrounded(reply, sources) {
 export function systemPrompt({ clock, carName, originName, homeName }) {
   return [
     'You are CasSama, the assistant in a shared EV charging app for Sime Darby Property townships in Malaysia (KL East).',
-    'Orchestrate: understand what the driver wants, call the right tools, then answer briefly (2 to 5 sentences) in plain English, or Malay if they wrote in Malay.',
+    'Orchestrate: understand what the driver wants, call the right tools, then answer briefly (2 to 4 short sentences) in plain English, or Malay if they wrote in Malay.',
+    'How to write the answer:',
+    '- Start with the answer itself, e.g. "Charge at X: RM5.50 for 6 kWh, 2 km away." Then one line on why, and one useful tip if there is one.',
+    '- The app shows the top chargers as cards and the Book / Open in Plan buttons under your reply, so do not describe buttons, cards, tools or agents, and do not say "I have put" or "I called".',
+    '- Name at most two options. You may use **bold** for the charger name and "- " bullets; no headings, tables or links.',
+    '- For a shared condo bay, mention residents come first and the sharing hours if relevant.',
     'Rules you must follow:',
     '- Every price, cost, time, distance and battery figure must come from a tool result in this conversation. Never estimate numbers yourself.',
     '- Use search_knowledge for questions about how CasSama works, and say which fact you used.',

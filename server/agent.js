@@ -68,6 +68,7 @@ export function createAgent({ key, baseUrl = 'https://dashscope-intl.aliyuncs.co
     const sources = [text];
     const citations = [];
     const actions = [];
+    let cards = [];
     let model = null;
     let reply = '';
 
@@ -88,6 +89,8 @@ export function createAgent({ key, baseUrl = 'https://dashscope-intl.aliyuncs.co
         if (name === 'search_knowledge') for (const p of out.passages || []) if (!citations.some((c) => c.id === p.id)) citations.push({ id: p.id, title: p.title });
         if (name === 'propose_booking' && out.proposed) actions.push({ type: 'book', chargerId: out.charger_id, label: `Book ${out.name}` });
         if (name === 'fill_trip_form' && out.filled) actions.push({ type: 'plan', ...out });
+        if (name === 'find_chargers' && out.picks?.length) cards = out.picks.slice(0, 3).map((p) => ({ kind: 'charger', id: p.charger_id, name: p.name, sub: `${p.operator} · ${p.type}`, price: p.price_per_kwh, cost: p.cost_rm, kwh: p.kwh, km: p.distance_km, shared: p.shared_condo_bay, home: p.your_condo }));
+        if (name === 'plan_trip' && out.ok) cards = [{ kind: 'trip', name: `Trip to ${out.destination}`, sub: `${out.km} km · ${out.total_time} · arrive with ${out.arrive_pct}%`, cost: out.charging_cost_rm, stops: out.stops.map((s) => ({ id: s.charger_id, name: s.name, minutes: s.minutes, cost: s.cost_rm, from: s.arrive_pct, to: s.leave_pct })) }];
         messages.push({ role: 'tool', tool_call_id: call.id, content: outText.slice(0, 6000) });
       }
     }
@@ -106,7 +109,7 @@ export function createAgent({ key, baseUrl = 'https://dashscope-intl.aliyuncs.co
     }
     if (!reply) reply = 'Sorry, I could not work that out. Try asking about where to charge, a trip, or how condo sharing works.';
     steps.push({ agent: 'Guardrail', did: 'Checked amounts against the agents\' results' });
-    return { reply, steps, citations, actions, model };
+    return { reply, steps, citations, actions, cards, model };
   }
 
   return { allow, ask };

@@ -140,3 +140,16 @@ test('POST /api/agent: off without a key, answers with one', async () => {
   assert.equal(on.status, 200);
   assert.equal(on.body.reply, 'Hi! Ask me about charging.');
 });
+
+test('chat replies render a safe subset of Markdown', async () => {
+  const { richText } = await import('../views/chat.js');
+  assert.equal(richText('Go to **Lumina**.'), '<p>Go to <b>Lumina</b>.</p>');
+  assert.equal(richText('Options:\n- **A** cheap\n- B fast'), '<p>Options:</p><ul><li><b>A</b> cheap</li><li>B fast</li></ul>');
+  assert.equal(richText('<img src=x onerror=alert(1)>'), '<p>&lt;img src=x onerror=alert(1)&gt;</p>');
+});
+
+test('charger names in capitals are tidied for the reply', async () => {
+  const { tidyName } = await import('../engine/agent.js');
+  assert.equal(tidyName('SMILE HOTEL WANGSA MAJU'), 'Smile Hotel Wangsa Maju');
+  assert.equal(tidyName('KL East Mall DC'), 'KL East Mall DC');
+});

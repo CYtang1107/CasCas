@@ -687,4 +687,19 @@ select.bare.big { font-size: 1.1rem; font-weight: 700; }
 .chat .steps ol { margin: 4px 0 0; padding-left: 18px; }
 .chat-foot { margin: 8px 0 0; font-size: 0.75rem; }
 .linkish { background: none; border: 0; padding: 0; color: var(--accent); text-decoration: underline; cursor: pointer; font: inherit; }
+.chat .rich p { margin: 0 0 6px; } .chat .rich p:last-child { margin: 0; }
+.chat .rich ul { margin: 4px 0 6px; padding-left: 18px; }
+.chat .msg.bot { width: 100%; max-width: 560px; }
+.ccards { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.ccard { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; background: var(--surface); color: var(--fg); border: 1px solid var(--line); border-radius: 12px; padding: 8px 10px; font: inherit; cursor: pointer; }
+.ccard:hover { border-color: var(--accent); }
+.ccard .crank { flex: none; width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent); font-weight: 700; font-size: 0.8rem; }
+.ccard .cmain, .ccard .cnums { display: flex; flex-direction: column; min-width: 0; }
+.ccard .cmain { flex: 1; } .ccard .cmain b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ccard .cnums { text-align: right; } .ccard .muted { font-size: 0.78rem; }
+.ccard.trip { display: block; cursor: default; margin-top: 8px; } .ccard.trip > .muted { display: block; }
+.ccard.trip ol { margin: 6px 0 0; padding-left: 18px; font-size: 0.88rem; }
+.chat-suggest { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.chip-btn { background: rgba(255, 255, 255, 0.16); color: #FFFFFF; border: 1px solid rgba(255, 255, 255, 0.35); border-radius: 999px; padding: 6px 12px; font: inherit; font-size: 0.85rem; cursor: pointer; }
+.chip-btn:hover { background: rgba(255, 255, 255, 0.26); }
 [hidden] { display: none !important; } /* the hidden attribute must win over display rules like .detail { display: grid } */

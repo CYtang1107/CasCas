@@ -626,7 +626,10 @@ function askAi(root, ctx, text) {
 }
 
 function bindChat(root) {
-  root.querySelector('[data-chat-clear]')?.addEventListener('click', () => { chat.messages = []; const el = root.querySelector('#d-chat'); if (el) el.innerHTML = ''; });
+  const redraw = () => { const el = root.querySelector('#d-chat'); if (el) { el.innerHTML = chatHtml(); bindChat(root); } };
+  root.querySelector('[data-chat-clear]')?.addEventListener('click', () => { chat.messages = []; redraw(); });
+  root.querySelectorAll('[data-chat-ask]').forEach((b) => b.addEventListener('click', () => { if (current) askAi(current.root, current.ctx, b.dataset.chatAsk); }));
+  root.querySelectorAll('[data-chat-view]').forEach((b) => b.addEventListener('click', () => { ui.selected = b.dataset.chatView; location.hash = '#map'; }));
   root.querySelectorAll('[data-chat-act]').forEach((b) => b.addEventListener('click', () => {
     const a = chatAction(b.dataset.chatAct);
     if (!a) return;
