@@ -20,6 +20,7 @@ const PARK_OPTIONS = [['30m', '30 min'], ['2h', '2 h'], ['4h', '4 h'], ['overnig
 const BUDGETS = [['', 'Any price'], ['0.9', 'Up to RM0.90/kWh'], ['1', 'Up to RM1.00/kWh'], ['1.2', 'Up to RM1.20/kWh'], ['1.5', 'Up to RM1.50/kWh']];
 const OPERATORS = ['Gentari', 'ChargEV', 'JomCharge', 'Tesla'];
 const noPrefs = () => ({ maxPrice: null, fastOnly: false, operator: null });
+const MAP_FILTERS = [['available', 'Available'], ['fast', 'Fast DC'], ['condo', 'Condo shared'], ['cheap', '≤ RM1.00']];
 const ALL_PLACES = [...PLACES, ...TRIP_PLACES];
 const svg = (d, cls = 'ic') => `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true"><path d="${d}"/></svg>`;
 const IC = {
@@ -35,7 +36,7 @@ const IC = {
 const availChip = (ch, occ) => { const a = availability(ch, occ); return `<span class="chip avail ${a.free ? 'on' : 'warn'}">${ch.type} ${a.free}/${a.total} free</span>`; };
 const navUrl = (ch) => `https://www.google.com/maps/dir/?api=1&destination=${ch.lat},${ch.lng}`;
 const placeOf = (id) => ALL_PLACES.find((p) => p.id === id) || PLACES[0];
-const fresh = () => ({ carId: 'emas7', battery: 35, placeId: 'klem', homeId: '', parkFor: '30m', stage: 'pick', pick: null, flash: '', pending: null, plate: '', selected: null, prefs: noPrefs(), ask: '', askNote: '', arriveMin: 20 });
+const fresh = () => ({ carId: 'emas7', battery: 35, placeId: 'klem', homeId: '', parkFor: '30m', stage: 'pick', pick: null, flash: '', pending: null, plate: '', selected: null, prefs: noPrefs(), ask: '', askNote: '', arriveMin: 20, mapFilter: null });
 let ui = fresh();
 let map = null;
 let layer = null;
@@ -76,7 +77,7 @@ export function renderDriver(root, ctx, which = 'home') {
     root.innerHTML = `
     <div class="driver tab-home">
       <section class="hello">
-        <p class="eyebrow">${esc(fmtTime(ctx.clock))} · KL East</p>
+        <p class="eyebrow">${esc(greeting(ctx.clock))} · ${esc(fmtTime(ctx.clock))}</p>
         <h2>Where are you charging today?</h2>
         ${askForm(true)}
       </section>
@@ -89,7 +90,9 @@ export function renderDriver(root, ctx, which = 'home') {
       <div id="d-home-body" aria-live="polite"></div>
     </div>`;
   } else if (which === 'map') {
-    root.innerHTML = `<div class="driver tab-map">${mapRow('full')}
+    root.innerHTML = `<div class="driver tab-map">
+      <div class="map-filters" role="group" aria-label="Filter chargers">${MAP_FILTERS.map(([k, l]) => `<button type="button" data-filter="${k}" aria-pressed="${ui.mapFilter === k}">${l}</button>`).join('')}</div>
+      ${mapRow('full')}
       <p class="map-hint">${esc(trip)} · <a href="#plan">Change</a></p></div>`;
   } else if (which === 'activity') {
     root.innerHTML = '<div class="driver tab-activity"><section class="panel" id="d-activity" aria-live="polite"></section></div>';
@@ -97,7 +100,11 @@ export function renderDriver(root, ctx, which = 'home') {
     root.innerHTML = `
   <div class="driver tab-plan">
     <section class="panel trip" aria-label="Trip">
-      <h2>Plan a charge or a trip</h2>
+      <h2>Plan</h2>
+      <div class="segmented" role="group" aria-label="Plan type">
+        <button type="button" data-seg="nearby" aria-pressed="${!placeOf(ui.placeId).trip}">Charge nearby</button>
+        <button type="button" data-seg="trip" aria-pressed="${!!placeOf(ui.placeId).trip}">Long trip</button>
+      </div>
       ${askForm(false)}
       <div class="fields">
       <label class="field">Car
@@ -129,10 +136,20 @@ export function renderDriver(root, ctx, which = 'home') {
   }
 
   const $ = (sel) => root.querySelector(sel);
+  root.querySelectorAll('[data-filter]').forEach((b) => b.addEventListener('click', () => {
+    ui.mapFilter = ui.mapFilter === b.dataset.filter ? null : b.dataset.filter;
+    root.querySelectorAll('[data-filter]').forEach((x) => x.setAttribute('aria-pressed', String(ui.mapFilter === x.dataset.filter)));
+    update(root, ctx);
+  }));
   $('#d-ask')?.addEventListener('submit', (e) => { e.preventDefault(); ask(root, ctx, $('#d-ask-text').value); });
   root.querySelectorAll('[data-quick]').forEach((a) => a.addEventListener('click', () => {
     if (a.dataset.quick === 'fast') ui.prefs.fastOnly = true;
     if (a.dataset.quick === 'trip' && !placeOf(ui.placeId).trip) ui.placeId = 'melaka';
+  }));
+  root.querySelectorAll('[data-seg]').forEach((b) => b.addEventListener('click', () => {
+    const trip = b.dataset.seg === 'trip';
+    if (trip !== !!placeOf(ui.placeId).trip) ui.placeId = trip ? 'melaka' : 'klem';
+    renderDriver(root, ctx, 'plan');
   }));
   if (which === 'plan') {
     $('#d-car').value = ui.carId;
@@ -165,6 +182,8 @@ export function renderDriver(root, ctx, which = 'home') {
   if (which === 'map' && ui.selected) focusSelected();
   if (ui.stage === 'charging' && !timer) startTimer();
 }
+
+const greeting = (d) => (d.getHours() < 12 ? 'Good morning' : d.getHours() < 18 ? 'Good afternoon' : 'Good evening');
 
 // "e.MAS 7 · 35% · to KL East Mall · 30 min": what the picks are for.
 function summaryLine() {
@@ -368,13 +387,14 @@ const facts = (c) => `<div class="facts">${availChip(c.charger, c.occupancy)}
 function heroCard(c) {
   return `
     <article class="pick hero">
-      <p class="eyebrow-tag">CasCas pick</p>
+      <div class="hero-tags"><span class="eyebrow-tag">CasCas pick</span>${c.isSharedVisit ? '<span class="chip amber-tag">Shared now</span>' : ''}${c.isResident ? `<span class="chip">${IC.home}Your condo</span>` : ''}</div>
       <h3>${esc(c.charger.name)}</h3>
       <p class="muted">${esc(c.charger.operator)} · ${esc(c.charger.connectors.join(', '))}</p>
-      ${facts(c)}
-      <ul class="reasons">${c.reasons.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>
+      <div class="facts">${availChip(c.charger, c.occupancy)}<span>${IC.pin}${c.km < 1 ? `${Math.round(c.km * 1000)} m` : `${c.km.toFixed(1)} km`}</span><span>${IC.bolt}${c.charger.kw} kW</span></div>
+      <p class="price-line"><b>${rm(c.price)}</b><span>/kWh${c.charger.priceEstimated ? ' est.' : ''} · ${esc(c.reasons[0])}</span></p>
+      <ul class="reasons">${c.reasons.slice(1).map((x) => `<li>${esc(x)}</li>`).join('')}</ul>
       <div class="btn-row"><button class="btn primary grow" type="button" data-book="${c.charger.id}">Book this bay</button>
-      <a class="btn" href="${esc(navUrl(c.charger))}" target="_blank" rel="noopener">${IC.nav}Navigate</a>
+      <a class="btn" href="${esc(navUrl(c.charger))}" target="_blank" rel="noopener">${IC.nav}Go</a>
       <button class="btn" type="button" data-detail="${c.charger.id}">On map</button></div>
     </article>`;
 }
@@ -448,25 +468,27 @@ function stageHtml(ctx, r) {
   if (ui.stage === 'charging') {
     const s = p.session;
     const battery = Math.min(100, p.startPct + (s.kWh / p.batteryKwh) * 100);
-    return `<h2>Charging at ${esc(p.name)}</h2>
-      <div class="meter" role="progressbar" aria-valuenow="${Math.round(battery)}" aria-valuemin="0" aria-valuemax="100"><span style="width:${battery}%"></span></div>
-      <dl class="stats">
-        <div><dt>Battery</dt><dd>${Math.round(battery)}%</dd></div>
-        <div><dt>Energy</dt><dd>${s.kWh.toFixed(1)} kWh</dd></div>
-        <div><dt>Cost so far</dt><dd>${rm(s.kWh * p.price)}</dd></div>
-        <div><dt>Time</dt><dd>${formatDuration(s.minutes)}</dd></div>
-      </dl>
+    const C = 2 * Math.PI * 102;
+    const left = Math.max(0, ((p.kWhTarget - s.kWh) / p.power) * 60);
+    const fullAt = new Date(p.bookedAt + (s.minutes + left) * 60000);
+    return `<div class="charge-view">
+      <div class="head"><h2>Charging</h2><span class="chip on"><span class="live-dot"></span>Live</span></div>
+      <p class="muted">${esc(p.name)}</p>
+      <div class="ring" role="progressbar" aria-label="Battery" aria-valuenow="${Math.round(battery)}" aria-valuemin="0" aria-valuemax="100">
+        <svg viewBox="0 0 220 220" aria-hidden="true"><circle class="track" cx="110" cy="110" r="102"/>
+          <circle class="value" cx="110" cy="110" r="102" stroke-dasharray="${C.toFixed(1)}" stroke-dashoffset="${(C * (1 - battery / 100)).toFixed(1)}"/></svg>
+        <div class="label"><b>${Math.round(battery)}%</b><span>+${s.kWh.toFixed(1)} kWh</span></div>
+      </div>
+      <div class="cstats">
+        <div><span>Cost so far</span><b>${rm(s.kWh * p.price)}</b></div>
+        <div><span>Time</span><b>${formatDuration(s.minutes)}</b></div>
+        <div><span>Full at</span><b>${esc(fmtClock(fullAt))}</b></div>
+        <div><span>Slot ends</span><b>${esc(fmtClock(new Date(p.slotEnd)))}</b></div>
+      </div>
+      <p class="notice amber">${IC.clock}<span>Move your car by ${esc(fmtClock(new Date(p.slotEnd)))}. After that it is ${rm(CONST.overstayRmPer10Min)} per 10 min, so the next driver can charge.${p.walk ? ` ${esc(p.walk)}: go ahead, the car charges while you are there.` : ''}</span></p>
+      <button class="btn danger" type="button" data-act="stop">Stop charging</button>
       <p class="muted">Demo speed: 1 second = 1 minute of charging.</p>
-      <section class="while" aria-label="While you charge">
-        <h3>While you charge</h3>
-        <ul>
-          ${p.walk ? `<li>${esc(p.walk)}. Go ahead, the car charges while you are there.</li>` : ''}
-          <li>We notify you when the charge is complete, and 15 minutes before your slot ends.</li>
-          <li>Your slot ends at <b>${esc(fmtClock(new Date(p.slotEnd)))}</b>. After that, an overstay fee of ${rm(CONST.overstayRmPer10Min)} per 10 min applies, so the next driver can charge.</li>
-          <li>You can stop charging from your phone at any time.</li>
-        </ul>
-      </section>
-      <button class="btn" type="button" data-act="stop">Stop charging</button>`;
+    </div>`;
   }
   const s = p.session;
   return `<p class="notice-line"><b>Notification:</b> ${s.kWh >= p.kWhTarget - 0.01 ? 'charging complete' : 'charging stopped'}. Please move your car by ${esc(fmtClock(new Date(p.slotEnd)))} to avoid the overstay fee.</p>
@@ -649,6 +671,17 @@ function initMap(el, fallback) {
   layer = L.layerGroup().addTo(map);
 }
 
+// Map filter chips: which pins to show.
+function passesFilter(ch, ctx) {
+  const f = ui.mapFilter;
+  if (!f) return true;
+  const condo = ctx.world.condos.find((c) => c.id === ch.condoId) || null;
+  if (f === 'fast') return ch.type === 'DC';
+  if (f === 'condo') return !!condo && isOpenToVisitors(condo, ctx.clock);
+  if (f === 'cheap') return priceAt(ch, ctx.clock, condo, !!condo && condo.id === ui.homeId) <= 1.0;
+  return availability(ch, occupancyAt(ch, ctx.clock, condo).total).free > 0;
+}
+
 function drawMarkers(root, ctx, origin, r, car) {
   if (!map) return;
   layer.clearLayers();
@@ -657,6 +690,7 @@ function drawMarkers(root, ctx, origin, r, car) {
   const off = new Map(r.excluded.map((x) => [x.charger.id, x.reason]));
   const byId = new Map(r.results.map((c) => [c.charger.id, c]));
   for (const ch of ctx.world.chargers) {
+    if (!passesFilter(ch, ctx)) continue;
     const condo = ctx.world.condos.find((c) => c.id === ch.condoId) || null;
     const isRes = !!condo && condo.id === ui.homeId;
     const res = byId.get(ch.id);
@@ -668,7 +702,7 @@ function drawMarkers(root, ctx, origin, r, car) {
     const html = `<span class="pin ${cls}">${ch.type === 'DC' ? IC.bolt : ''}${rm(price)}${shared}</span>`;
     const marker = L.marker([ch.lat, ch.lng], { icon: L.divIcon({ html: html.replace('class="pin ', `class="pin ${ui.selected === ch.id ? 'sel ' : ''}`), className: 'pin-wrap', iconSize: null }), title: ch.name })
       .bindPopup(popupHtml(ch, price, !!shared), { maxWidth: 260 }).addTo(layer);
-    marker.on('click', () => select(root, ctx, ch.id, false));
+    marker.on('click', () => { if (matchMedia('(max-width: 760px)').matches) marker.closePopup(); select(root, ctx, ch.id, false); });
     marker.on('popupopen', (e) => {
       e.popup.getElement()?.querySelector('[data-detail]')?.addEventListener('click', () => select(root, ctx, ch.id, false));
     });
