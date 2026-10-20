@@ -121,7 +121,7 @@ function describe(name, a) {
     case 'plan_trip': return `Planned a trip to ${a.destination}`;
     case 'best_time': return 'Found the cheapest time to charge';
     case 'estimate_cost': return `Priced ${a.kwh ?? '?'} kWh`;
-    case 'condo_revenue': return `Worked out ${a.condo_id}'s income`;
+    case 'condo_revenue': return `Built ${a.condo_id}'s monthly report and idle hours`;
     case 'search_knowledge': return `Looked up "${String(a.query || '').slice(0, 40)}"`;
     case 'propose_booking': return 'Prepared a booking for you to confirm';
     case 'fill_trip_form': return 'Filled in the Plan screen';

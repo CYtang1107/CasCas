@@ -13,6 +13,7 @@ import { priceAt, round2 } from './pricing.js';
 import { simulateCondoMonth } from './economics.js';
 import { searchKnowledge } from './kb.js';
 import { isTrip } from './geocode.js';
+import { idleWindow } from './cpo.js';
 
 const ALL_PLACES = [...PLACES.filter((p) => p.id !== 'here'), ...TRIP_PLACES];
 // Open Charge Map often has names IN CAPITALS; show them in title case.
@@ -39,7 +40,7 @@ export const TOOLS = [
   fn('estimate_cost', 'Cost estimation agent: kWh times the price at a charger right now.', {
     charger_id: { type: 'string' }, kwh: { type: 'number' },
   }, ['charger_id', 'kwh']),
-  fn('condo_revenue', 'Revenue agent: this month\'s charging income for a condo, what the JMB keeps and the saving per unit.', {
+  fn('condo_revenue', 'Revenue agent: a condo\'s monthly report: charging income, the JMB (30%) and CPO (70%) shares, saving per unit, bay use, and the idle hours when more bays could be shared.', {
     condo_id: { type: 'string', description: 'e.g. lumina, serini' },
   }, ['condo_id']),
   fn('search_knowledge', 'Look up how CasSama works: sharing, votes, fees, tariffs, privacy, trips, income.', {
@@ -131,10 +132,20 @@ export function runTool(name, args, env) {
       if (!condo) return { error: `Unknown condo. Known: ${env.world.condos.map((c) => c.id).join(', ')}` };
       const site = env.world.chargers.find((c) => c.condoId === condo.id);
       const sim = simulateCondoMonth(condo, site, new Date(env.clock.getFullYear(), env.clock.getMonth(), 1));
+      const r = sim.recovery;
+      const idle = idleWindow(condo, site, sim);
+      const s = condo.sharing;
+      const hour = (h) => `${h % 12 || 12} ${h < 12 || h === 24 ? 'AM' : 'PM'}`;
       return {
-        condo: condo.name, month_receipts_rm: round2(sim.revenue), jmb_income_rm: round2(sim.jmbIncome),
-        from_visitors_rm: round2(sim.revenue ? sim.jmbIncome * (sim.visitorRevenue / sim.revenue) : 0),
-        saving_per_unit_rm: round2(sim.perUnitSaving), sharing_mode: condo.sharing.mode === 'auto' ? 'auto' : 'fixed hours', simulated: true,
+        condo: condo.name, bays: condo.bays, month_receipts_rm: round2(r.revenue), kwh_delivered: Math.round(r.kWh),
+        visitor_kwh_pct: Math.round((sim.kWhSold ? sim.visitorKwh / sim.kWhSold : 0) * 100), bay_use_pct: Math.round(sim.utilisation * 100),
+        operating_surplus_rm: round2(r.operatingSurplus), jmb_income_rm: round2(r.jmbIncome), cpo_income_rm: round2(r.partnerIncome),
+        jmb_share_pct: Math.round(condo.jmbShare * 100), saving_per_unit_rm: round2(r.perUnit),
+        break_even_kwh: r.breakEvenKwh ? Math.round(r.breakEvenKwh) : null,
+        sharing: !s.enabled ? 'off' : s.mode === 'auto' ? 'auto (7 AM to 10 PM when residents are not expected)' : `${hour(s.start)} to ${hour(s.end)}, ${s.days}`,
+        idle_hours: idle ? { from: hour(idle.start), to: hour(idle.end), residents_use_pct: Math.round(idle.avgUse * 100) } : null,
+        idle_already_shared: !!idle && s.enabled && (s.mode === 'auto' || (idle.start >= s.start && idle.end <= s.end)),
+        simulated: true,
       };
     }
     case 'search_knowledge':

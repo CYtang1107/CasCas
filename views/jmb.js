@@ -11,11 +11,13 @@ import { liveHtml, bindLive } from './jmb-live.js';
 import { recoveryHtml, quietHtml, maintenanceHtml, bindMaintenance, reportCsv, downloadCsv } from './jmb-ops.js';
 import { bayStatus, maintenanceCost } from '../engine/maintenance.js';
 import { filterSessions } from '../engine/insights.js';
+import { renderCpo } from './cpo.js';
 
 let condoId = null;
 const PEAK_HOURS = Array.from({ length: TNB.peakEndHour - TNB.peakStartHour }, (_, i) => TNB.peakStartHour + i);
 
 export function renderJmb(root, ctx) {
+  if (location.hash === '#cpo') { renderCpo(root, ctx); return; }
   const { condos, chargers } = ctx.world;
   const fromUrl = location.hash.slice(1);
   if (condos.some((c) => c.id === fromUrl)) condoId = fromUrl;
@@ -59,7 +61,7 @@ export function renderJmb(root, ctx) {
       <div><p class="eyebrow">JMB dashboard · ${esc(start.toLocaleString('en-MY', { month: 'long', year: 'numeric' }))}</p>
         <h2>${esc(condo.name)}</h2>
         <p class="muted">${condo.units} units · ${condo.bays} charging bays · the JMB keeps ${pct(condo.jmbShare)} of the margin, the charging partner keeps the rest</p></div>
-      <label class="field inline">Condo <select id="j-condo">${condos.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select></label>
+      <label class="field inline">Condo <select id="j-condo"><option value="cpo">CPO: all sites</option>${condos.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select></label>
     </div>
 
     <div class="kpis" id="j-s-overview">
@@ -144,7 +146,7 @@ export function renderJmb(root, ctx) {
 
   const $ = (sel) => root.querySelector(sel);
   $('#j-condo').value = condo.id;
-  $('#j-condo').addEventListener('change', (e) => { condoId = e.target.value; history.replaceState(null, '', `#${condoId}`); ctx.rerender(); });
+  $('#j-condo').addEventListener('change', (e) => { if (e.target.value === 'cpo') { location.hash = '#cpo'; return; } condoId = e.target.value; history.replaceState(null, '', `#${condoId}`); ctx.rerender(); });
   root.querySelectorAll('[data-jump]').forEach((b) => b.addEventListener('click', () => document.getElementById(b.dataset.jump)?.scrollIntoView({ block: 'start' })));
   const token = ctx.api ? getToken(condo.id) : null;
   bindProposal(root, ctx, condo, token);

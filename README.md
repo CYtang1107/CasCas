@@ -13,6 +13,8 @@ Two front doors, one codebase:
 
 A condo's own portal link: add its id, e.g. `jmb.html#lumina`. Bookings made in the driver app show up in the portal (live on Render).
 
+Charging partner (CPO) view across all condo sites: `jmb.html#cpo` (its 70% share, energy, bay use, bays in service, idle hours not yet shared). The AI Revenue agent also answers "When are Lumina's bays idle?" with the same monthly report.
+
 ## What it shows
 
 - **Driver:** battery-aware picks across every provider around KL East. Low battery gets the nearest working charger; high battery gets cheaper, quieter ones, with demand balancing that keeps busy fast chargers free for drivers who need them. Every booking records (anonymously) whether the driver took a CasSama pick and what it saved vs the nearest charger.
