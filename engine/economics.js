@@ -1,5 +1,4 @@
 import { CONST } from '../config.js';
-import { tnbRate } from '../data/tariff.js';
 import { priceAt } from './pricing.js';
 import { occupancyAt } from './occupancy.js';
 import { costRecovery } from './recovery.js';
@@ -42,7 +41,7 @@ export function simulateCondoMonth(condo, charger, start, { occupancyFn = occupa
     visitorKwh += vK;
     residentRevenue += rK * priceAt(charger, t, condo, true);
     visitorRevenue += vK * priceAt(charger, t, condo, false);
-    electricityCost += (rK + vK) * tnbRate(t);
+    electricityCost += (rK + vK) * CONST.electricityCostPerKwh;
     residentByHour[h] += rK / days;
     visitorByHour[h] += vK / days;
   });

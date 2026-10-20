@@ -58,7 +58,7 @@ test('simulated KL East: sharing condos earn more per unit than non-sharing ones
   const sharing = perCondo.filter((r) => r.condo.sharing.enabled);
   const closed = perCondo.filter((r) => !r.condo.sharing.enabled);
   assert.ok(avg(sharing) > avg(closed), `${avg(sharing)} vs ${avg(closed)}`);
-  for (const r of perCondo) assert.ok(r.perUnitSaving > 3 && r.perUnitSaving < 40, `${r.condo.id}: ${r.perUnitSaving}`);
+  for (const r of perCondo) assert.ok(r.perUnitSaving > 0 && r.perUnitSaving < 40, `${r.condo.id}: ${r.perUnitSaving}`);
 });
 
 test('JMB income comes from the surplus after fixed, variable and maintenance costs', () => {

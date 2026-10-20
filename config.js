@@ -17,6 +17,7 @@ export const CONST = {
   drawFactor: 0.5,        // share of an occupied hour a car actually draws power
   walkKmh: 4.8,           // walking speed for charger → destination
   overstayRmPer10Min: 1,  // fee per started 10 minutes after the slot ends (goes to the JMB)
+  electricityCostPerKwh: 0.55, // effective cost of sub-metered electricity to the CPO, all-in (proposal 6.2)
   otherCostPerKwh: 0.05,  // payment fees, platform and other variable costs (proposal 6.2)
   fixedPerBayMonthly: 125, // network, insurance and service contract: RM500 a month for 4 bays (proposal 6.2)
 };
