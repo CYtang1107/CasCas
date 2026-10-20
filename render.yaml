@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: cascas
+    name: cassama
     runtime: node
     plan: free
     buildCommand: npm ci
@@ -13,11 +13,16 @@ services:
         value: Asia/Kuala_Lumpur
       - key: OCM_KEY
         sync: false
-      - key: JMB_SECRET
-        generateValue: true
-      - key: DASHSCOPE_API_KEY
-        sync: false
       - key: TOMTOM_KEY
         sync: false
+      # AI agents: any OpenAI-compatible endpoint. Defaults to Tencent Token Plan (enterprise, Guangzhou).
+      - key: AI_API_KEY
+        sync: false
+      - key: AI_BASE_URL
+        value: https://tokenhub.tencentmaas.com/plan/v3
+      - key: AI_MODELS
+        value: deepseek-v4-flash,glm-5
+      - key: JMB_SECRET
+        generateValue: true
       - key: OCPP_PASSWORD
         generateValue: true
