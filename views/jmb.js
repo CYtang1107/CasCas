@@ -1,7 +1,9 @@
 import { CONST } from '../config.js';
 import { TNB } from '../data/tariff.js';
 import { simulateCondoMonth, rampSeries } from '../engine/economics.js';
-import { validateSharing } from '../engine/sharing.js';
+import { validateSharing, isOpenToVisitors } from '../engine/sharing.js';
+import { describeSharing, proposalFor, proposalHtml, bindProposal, propose } from './governance.js';
+import { getToken } from './jmb-shared.js';
 import { barChart24, lineChart } from './charts.js';
 import { esc, rm, rm0, num, pct, monthLabel } from './format.js';
 import { privateSection } from './jmb-shared.js';
@@ -27,6 +29,20 @@ export function renderJmb(root, ctx) {
   const maintenanceRm = entries ? maintenanceCost(entries, start.getTime(), monthEnd) : 0;
   const sim = simulateCondoMonth(condo, charger, start, { maintenanceRm });
   const s = condo.sharing;
+  const vote = proposalFor(ctx, condo);
+  // Auto vs fixed hours for this condo: hours open on a typical weekday and the JMB's monthly income.
+  const day = new Date(2026, 9, 21);
+  const openHours = (sh) => Array.from({ length: 24 }, (_, h) => isOpenToVisitors({ ...condo, sharing: sh }, new Date(day.getFullYear(), day.getMonth(), day.getDate(), h, 30))).filter(Boolean).length;
+  const asMode = (mode) => ({ ...s, enabled: true, mode, days: s.days });
+  const simAuto = simulateCondoMonth({ ...condo, sharing: asMode('auto') }, charger, start, { maintenanceRm });
+  const simHours = simulateCondoMonth({ ...condo, sharing: asMode('hours') }, charger, start, { maintenanceRm });
+  const gain = simAuto.jmbIncome - simHours.jmbIncome;
+  const autoHtml = `<div class="auto-compare">
+    <p><b>Auto sharing vs fixed hours</b> (simulated month)</p>
+    <div class="cmp"><div><span>Fixed ${s.start}:00–${s.end}:00</span><b>${rm0(simHours.jmbIncome)}</b><small>${openHours(asMode('hours'))} h open on a weekday</small></div>
+      <div class="win"><span>Auto</span><b>${rm0(simAuto.jmbIncome)}</b><small>${openHours(asMode('auto'))} h open on a weekday</small></div></div>
+    <p class="muted">${gain > 0 ? `Auto would add about <b>${rm0(gain)}</b> a month for the JMB` : 'Fixed hours already cover the idle time'}, still keeping ${s.reservedBays} bays for residents and closing before the evening rush.</p>
+  </div>`;
   const sinkingYear = 0.1 * condo.monthlyFee * condo.units * 12;
   const boost = (sim.jmbIncome * 12) / sinkingYear;
   const months = Array.from({ length: 6 }, (_, i) => monthLabel(new Date(start.getFullYear(), start.getMonth() - 5 + i, 1)));
@@ -77,22 +93,29 @@ export function renderJmb(root, ctx) {
         <button id="j-report" class="btn small" type="button">Download monthly report (CSV)</button>
       </section>
       <section class="card" id="j-s-sharing"><h3>Sharing with outside drivers</h3>
-        ${priv.canEdit ? '' : '<p class="muted">Log in with the condo PIN below to change these settings.</p>'}
-        <form id="j-share" class="form" novalidate><fieldset class="plain" ${priv.canEdit ? '' : 'disabled'}>
-          <label class="check"><input type="checkbox" id="j-en" ${s.enabled ? 'checked' : ''}> Open idle bays to outside drivers</label>
+        <p class="inforce"><span class="chip ${s.enabled ? 'on' : 'off'}">${s.enabled ? 'In force' : 'Paused'}</span> ${esc(describeSharing({ ...s, enabled: true }))}</p>
+        ${priv.canEdit ? `<div class="btn-row"><button type="button" class="btn small" id="j-pause">${s.enabled ? 'Pause sharing now' : 'Resume sharing'}</button></div>
+          <p class="muted">Pausing or resuming takes effect at once. Any other change goes to a resident vote.</p>` : '<p class="muted">Log in with the condo PIN below to pause sharing or propose a change.</p>'}
+        ${autoHtml}
+        ${proposalHtml(condo, vote, 'jmb', priv.canEdit)}
+        <p class="error vote-err" role="alert" hidden></p>
+        ${priv.canEdit && vote.proposal?.status !== 'open' ? `<details class="propose"><summary>Propose a change to residents</summary>
+        <form id="j-share" class="form" novalidate>
+          <label class="field">Sharing mode <select id="j-mode"><option value="auto">Auto: share whenever bays are idle</option><option value="hours">Fixed hours</option></select></label>
           <label class="field">Days <select id="j-days">
             <option value="weekdays">Weekdays</option><option value="weekends">Weekends</option><option value="all">Every day</option></select></label>
-          <div class="row">
+          <div class="row" id="j-hours">
             <label class="field">Opens (hour) <input id="j-start" type="number" min="0" max="23" step="1" value="${s.start}"></label>
             <label class="field">Closes (hour) <input id="j-end" type="number" min="1" max="24" step="1" value="${s.end}"></label>
           </div>
           <div class="row">
-            <label class="field">Bays kept for residents <input id="j-res" type="number" min="0" max="${condo.bays}" step="1" value="${s.reservedBays}"></label>
+            <label class="field">Bays always kept for residents <input id="j-res" type="number" min="0" max="${condo.bays}" step="1" value="${s.reservedBays}"></label>
             <label class="field">Visitor price (RM/kWh) <input id="j-price" type="number" min="0.5" max="3" step="0.05" value="${s.visitorPrice}"></label>
           </div>
           <p id="j-err" class="error" role="alert" hidden></p>
-          <p class="muted">Residents pay ${rm(condo.residentPrice)}/kWh. TNB peak hours add ${rm(condo.peakSurcharge)}. Changes update this dashboard and the driver map.</p>
-        </fieldset></form>
+          <button class="btn primary" type="submit">Put to a resident vote</button>
+          <p class="muted">Residents pay ${rm(condo.residentPrice)}/kWh. TNB peak hours add ${rm(condo.peakSurcharge)}. The vote runs 7 days; the JMB can close it early.</p>
+        </form></details>` : ''}
       </section>
     </div>
 
@@ -121,32 +144,42 @@ export function renderJmb(root, ctx) {
 
   const $ = (sel) => root.querySelector(sel);
   $('#j-condo').value = condo.id;
-  $('#j-days').value = s.days;
   $('#j-condo').addEventListener('change', (e) => { condoId = e.target.value; history.replaceState(null, '', `#${condoId}`); ctx.rerender(); });
   root.querySelectorAll('[data-jump]').forEach((b) => b.addEventListener('click', () => document.getElementById(b.dataset.jump)?.scrollIntoView({ block: 'start' })));
-  $('#j-share').addEventListener('submit', (e) => e.preventDefault());
-  $('#j-share').addEventListener('change', async () => {
-    const next = {
-      enabled: $('#j-en').checked,
-      days: $('#j-days').value,
-      start: Number($('#j-start').value),
-      end: Number($('#j-end').value),
-      reservedBays: Number($('#j-res').value),
-      visitorPrice: Number($('#j-price').value),
-    };
-    const err = validateSharing(next, condo.bays);
-    const box = $('#j-err');
-    if (err) { box.textContent = err; box.hidden = false; return; }
-    box.hidden = true;
-    if (priv.save) {
-      const r = await priv.save(next);
-      if (!r.ok) { box.textContent = r.error; box.hidden = false; }
-      return;
-    }
+  const token = ctx.api ? getToken(condo.id) : null;
+  bindProposal(root, ctx, condo, token);
+  root.querySelector('#j-pause')?.addEventListener('click', async () => {
+    const next = { ...s, enabled: !s.enabled };
+    if (priv.save) { const r = await priv.save(next); if (!r.ok) alert(r.error); return; }
     ctx.state.sharing[condo.id] = next;
     ctx.save();
     ctx.rerender();
   });
+  const form = root.querySelector('#j-share');
+  if (form) {
+    form.querySelector('#j-mode').value = s.mode === 'hours' ? 'hours' : 'auto';
+    form.querySelector('#j-days').value = s.days;
+    const syncHours = () => { form.querySelector('#j-hours').hidden = form.querySelector('#j-mode').value === 'auto'; };
+    syncHours();
+    form.querySelector('#j-mode').addEventListener('change', syncHours);
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const next = {
+        enabled: true,
+        mode: form.querySelector('#j-mode').value,
+        days: form.querySelector('#j-days').value,
+        start: Number(form.querySelector('#j-start').value),
+        end: Number(form.querySelector('#j-end').value),
+        reservedBays: Number(form.querySelector('#j-res').value),
+        visitorPrice: Number(form.querySelector('#j-price').value),
+      };
+      const box = form.querySelector('#j-err');
+      const err = validateSharing(next, condo.bays);
+      if (err) { box.textContent = err; box.hidden = false; return; }
+      const r = await propose(ctx, condo, next, token);
+      if (!r.ok) { box.textContent = r.error; box.hidden = false; }
+    });
+  }
   priv.bind(root);
   bindMaintenance(root, condo, ctx, priv.addMaintenance);
   bindLive(root, condo, ctx);

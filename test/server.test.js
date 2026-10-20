@@ -225,3 +225,28 @@ test('TomTom data through the server: validated, cached, key kept on the server'
   assert.equal((await fetch(`${base}/api/tt/incidents?bbox=nope`)).status, 400);
   await new Promise((r) => server.close(r));
 });
+
+test('residents vote on a sharing change; it applies only if it passes', async () => {
+  const s = await start();
+  const settings = { enabled: true, mode: 'auto', days: 'all', start: 9, end: 17, reservedBays: 2, visitorPrice: 1.2 };
+  assert.equal((await s.call('POST', '/api/jmb/lumina/proposal', { settings })).status, 401);
+  const token = (await s.call('POST', '/api/jmb/login', { condoId: 'lumina', pin: '4821' })).body.token;
+  assert.equal((await s.call('POST', '/api/jmb/lumina/proposal', { settings }, token)).status, 201);
+  let pub = (await s.call('GET', '/api/condos/lumina/proposal')).body;
+  assert.equal(pub.proposal.status, 'open');
+  assert.equal(pub.proposal.votes, undefined, 'individual votes stay private');
+  assert.equal((await s.call('POST', '/api/condos/lumina/proposal/vote', { voterId: 'bad id!', vote: 'yes' })).status, 400);
+  await s.call('POST', '/api/condos/lumina/proposal/vote', { voterId: 'device-1234', vote: 'yes' });
+  pub = (await s.call('POST', '/api/condos/lumina/proposal/vote', { voterId: 'device-1234', vote: 'no' })).body;
+  assert.deepEqual([pub.tally.yes, pub.tally.no], [0, 1], 'a device can change its vote, not vote twice');
+  const closedEarly = (await s.call('POST', '/api/jmb/lumina/proposal/close', {}, token)).body;
+  assert.equal(closedEarly.proposal.status, 'failed');
+  assert.notEqual((await s.call('GET', '/api/world')).body.sharing.lumina?.mode, 'auto', 'a failed vote changes nothing');
+  await s.call('POST', '/api/jmb/lumina/proposal', { settings }, token);
+  const sample = (await s.call('POST', '/api/jmb/lumina/proposal/sample', {}, token)).body;
+  assert.ok(sample.proposal.sampleVotes > 0 && sample.tally.quorumMet);
+  const passed = (await s.call('POST', '/api/jmb/lumina/proposal/close', {}, token)).body;
+  assert.equal(passed.proposal.status, 'passed');
+  assert.equal((await s.call('GET', '/api/world')).body.sharing.lumina.mode, 'auto');
+  await s.close();
+});

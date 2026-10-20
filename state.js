@@ -3,7 +3,7 @@ const KEY = 'cascas.v1';
 export const MAX_SESSIONS = 500;
 // The driver's own settings on this device (no accounts in the prototype).
 const blankProfile = () => ({ name: '', carId: null, homeId: '', prefs: null, theme: 'light' });
-const blank = () => ({ checkins: {}, booking: null, sharing: {}, sessions: [], visitorPasses: [], anonNo: null, maintenance: {}, searchHistory: [], favourites: [], profile: blankProfile() });
+const blank = () => ({ checkins: {}, booking: null, sharing: {}, sessions: [], visitorPasses: [], anonNo: null, maintenance: {}, searchHistory: [], favourites: [], profile: blankProfile(), proposals: {}, voterId: '', myVotes: {} });
 let memory = blank();
 
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -25,6 +25,9 @@ function clean(parsed) {
   for (const k of ['searchHistory', 'favourites']) {
     if (Array.isArray(parsed[k])) s[k] = parsed[k].filter((x) => typeof x === 'string').slice(0, 50);
   }
+  if (isObject(parsed.proposals)) for (const [id, p] of Object.entries(parsed.proposals)) if (isObject(p) && isObject(p.votes)) s.proposals[id] = p;
+  if (typeof parsed.voterId === 'string') s.voterId = parsed.voterId.slice(0, 64);
+  if (isObject(parsed.myVotes)) for (const [id, v] of Object.entries(parsed.myVotes)) if (v === 'yes' || v === 'no') s.myVotes[id] = v;
   if (isObject(parsed.profile)) {
     const p = parsed.profile;
     const str = (v, max) => (typeof v === 'string' ? v.trim().slice(0, max) : '');

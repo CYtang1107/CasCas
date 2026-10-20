@@ -47,3 +47,27 @@ test('occupancy adds visitors only while a condo is open', () => {
   assert.equal(mall.visitor, 0);
   assert.ok(mall.total > 0);
 });
+
+test('auto mode: shares when residents leave bays idle, keeps bays for them, never at night', () => {
+  const auto = condo({ mode: 'auto', reservedBays: 2 });
+  assert.equal(isOpenToVisitors(auto, wed(11)), true, 'weekday late morning: residents are at work');
+  assert.equal(isOpenToVisitors(auto, wed(19)), false, 'evening: residents are coming home to charge');
+  assert.equal(isOpenToVisitors(auto, wed(2)), false, 'no visitors overnight');
+  assert.equal(isOpenToVisitors(auto, sat(11)), false, 'weekdays only, like the JMB set');
+  assert.equal(isOpenToVisitors({ ...auto, sharing: { ...auto.sharing, days: 'all' } }, sat(11)), true);
+  assert.ok(visitorBaysFree(auto, 0.1, wed(11)) > 0);
+  assert.ok(visitorBaysFree(auto, 0.1, wed(11)) <= 8, 'always keeps 2 for residents');
+  assert.equal(visitorBaysFree(auto, 1, wed(11)), 0, 'residents already charging come first');
+});
+
+test('auto mode opens hours that fixed 9-to-5 sharing misses', () => {
+  const auto = condo({ mode: 'auto', days: 'all' });
+  const fixed = condo({ days: 'all' });
+  const open = (c) => Array.from({ length: 24 }, (_, h) => isOpenToVisitors(c, wed(h))).filter(Boolean).length;
+  assert.ok(open(auto) > open(fixed), `${open(auto)} vs ${open(fixed)}`);
+});
+
+test('sharing mode must be hours or auto', () => {
+  assert.equal(validateSharing({ ...condo().sharing, mode: 'auto' }, 10), null);
+  assert.match(validateSharing({ ...condo().sharing, mode: 'magic' }, 10), /mode/i);
+});

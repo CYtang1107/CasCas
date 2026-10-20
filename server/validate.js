@@ -41,7 +41,7 @@ export function cleanCheckin(c) {
 export function cleanSharing(s) {
   if (!s || typeof s !== 'object') return null;
   return {
-    enabled: s.enabled === true, days: s.days, start: Number(s.start), end: Number(s.end),
+    enabled: s.enabled === true, mode: s.mode === 'auto' ? 'auto' : 'hours', days: s.days, start: Number(s.start), end: Number(s.end),
     reservedBays: Number(s.reservedBays), visitorPrice: Number(s.visitorPrice),
   };
 }

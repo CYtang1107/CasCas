@@ -11,7 +11,9 @@ import { distanceKm } from '../engine/geo.js';
 import { emptyFilters, countFilters, matchesFilters, FAST_KW } from '../engine/filters.js';
 import { priceNote } from '../engine/pricing.js';
 import { siteArt, brandMark } from './art.js';
-import { co2AvoidedKg as co2Kg } from '../engine/economics.js';
+import { co2AvoidedKg as co2Kg, simulateCondoMonth } from '../engine/economics.js';
+import { residentStatement } from '../engine/governance.js';
+import { describeSharing, proposalFor, proposalHtml, bindProposal } from './governance.js';
 import { searchSites, categoryOf, remember } from '../engine/search.js';
 import { searchPlaces, localMatches, isTrip } from '../engine/geocode.js';
 import { CONDOS } from '../data/condos.js';
@@ -23,7 +25,7 @@ import { planTrip } from '../engine/trip.js';
 import { TRIP_PLACES, HIGHWAY_CHARGERS } from '../data/trips.js';
 import { normalisePlate, isValidPlate, formatPlate, canAutoApprove, createPass } from '../engine/access.js';
 import { addSession, anonNumber } from '../state.js';
-import { esc, rm, fmtTime, fmtClock } from './format.js';
+import { esc, rm, rm0, fmtTime, fmtClock } from './format.js';
 
 const PARK_OPTIONS = [['30m', '30 min'], ['2h', '2 h'], ['4h', '4 h'], ['overnight', 'Overnight']];
 const BUDGETS = [['', 'Any price'], ['0.9', 'Up to RM0.90/kWh'], ['1', 'Up to RM1.00/kWh'], ['1.2', 'Up to RM1.20/kWh'], ['1.5', 'Up to RM1.50/kWh']];
@@ -329,7 +331,11 @@ function homeHtml(r, ctx, trip, place) {
   } else {
     main = heroCard(r.results[0]);
   }
-  return active + flash + `<section class="home-pick">${head}${main}</section>`
+  const myCondo = ctx.world.condos.find((c) => c.id === ui.homeId);
+  const v = myCondo ? proposalFor(ctx, myCondo) : null;
+  const voteBanner = v?.proposal?.status === 'open' && !v.myVote
+    ? `<a class="banner vote" href="#account">${IC.help}<span><b>Vote on bay sharing</b> at ${esc(myCondo.name)}: ${esc(describeSharing(v.proposal.settings).split('.')[0])}</span><span aria-hidden="true">›</span></a>` : '';
+  return active + voteBanner + flash + `<section class="home-pick">${head}${main}</section>`
     + placeRow(ctx, 'While you shop', (c) => c.siteType === 'mall')
     + condosHtml(ctx)
     + placeRow(ctx, 'While on the road', (c) => c.siteType === 'public' && !c.highway)
@@ -389,6 +395,7 @@ function accountHtml(ctx) {
       <button type="button" class="pill-btn" data-a="name">Edit name</button>
       <div class="pstats"><div><span>Output (kWh)</span><b>${kWh.toFixed(1)}</b></div><div><span>Sessions</span><b>${sessions.length}</b></div><div><span>CO₂ avoided (kg)</span><b>${Math.round(co2Kg(kWh))}</b></div></div>
     </section>
+    ${condo ? condoHtml(ctx, condo) : ''}
     <h3 class="agroup">My profile</h3>
     <div class="alist">
       <label class="arow">${IC.car}<span>My car</span><select id="a-car" class="bare">${CARS.map((c) => `<option value="${c.id}" ${car?.id === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></label>
@@ -430,6 +437,37 @@ function accountHtml(ctx) {
       <p class="version">CasCas prototype · version 0.9</p></section>`;
 }
 
+// "My condo earned": this month's charging income for the resident's condo, and their vote.
+function condoHtml(ctx, condo) {
+  const charger = ctx.world.chargers.find((ch) => ch.condoId === condo.id);
+  const start = new Date(ctx.clock.getFullYear(), ctx.clock.getMonth(), 1);
+  const st = residentStatement(simulateCondoMonth(condo, charger, start), condo);
+  const c = st.costs;
+  const row = (l, v, cls = '') => `<tr class="${cls}"><td>${l}</td><td>${v}</td></tr>`;
+  const vote = proposalFor(ctx, condo);
+  return `
+    <h3 class="agroup">My condo · ${esc(condo.name)}</h3>
+    <section class="statement">
+      <p class="eyebrow">${esc(start.toLocaleString('en-MY', { month: 'long', year: 'numeric' }))} statement</p>
+      <p class="big-save"><b>${rm(st.perUnit)}</b> off your monthly fee</p>
+      <p>Fee ${rm(condo.monthlyFee)} instead of ${rm(st.feeWithout)}, so ${rm(st.yearPerUnit)} a year.</p>
+      <div class="srows"><div><span>Your JMB earned from charging</span><b>${rm0(st.jmbIncome)}</b></div>
+        <div><span>of which from visitors using idle bays</span><b>${rm0(st.fromVisitors)}</b></div></div>
+      <details><summary>Where the money goes</summary><div class="tbl"><table><tbody>
+        ${row('Charging receipts', rm(c.revenue))}${row('− TNB electricity', rm(c.electricityCost))}${row('− Other costs', rm(c.variableCost + c.fixedMonthly))}
+        ${row('− Repairs logged', rm(c.maintenanceRm))}${row('Operating surplus', rm(c.operatingSurplus), 'total')}
+        ${row(`JMB share (${Math.round(condo.jmbShare * 100)}%) to the maintenance fund`, rm(c.jmbIncome), 'hero-row')}${row('Charging partner', rm(c.partnerIncome))}
+      </tbody></table></div></details>
+      <p class="muted">A simulated month for the prototype. A real JMB would publish its own figures here.</p>
+    </section>
+    <h3 class="agroup">Vote on bay sharing</h3>
+    <section class="statement">
+      ${proposalHtml(condo, vote, 'resident')}
+      <p class="error vote-err" role="alert" hidden></p>
+      <p class="muted"><b>In force now:</b> ${esc(describeSharing(condo.sharing))}</p>
+    </section>`;
+}
+
 function saveProfile(ctx, patch) {
   ctx.state.profile = { ...ctx.state.profile, ...patch };
   ctx.save();
@@ -439,7 +477,9 @@ function bindAccount(root, ctx) {
   const $ = (sel) => root.querySelector(sel);
   const redraw = () => { $('#d-account').innerHTML = accountHtml(ctx); bindAccount(root, ctx); };
   $('#a-car').addEventListener('change', (e) => { ui.carId = e.target.value; saveProfile(ctx, { carId: ui.carId }); });
-  $('#a-home').addEventListener('change', (e) => { ui.homeId = e.target.value; saveProfile(ctx, { homeId: ui.homeId }); });
+  $('#a-home').addEventListener('change', (e) => { ui.homeId = e.target.value; saveProfile(ctx, { homeId: ui.homeId }); redraw(); });
+  const myCondo = ctx.world.condos.find((c) => c.id === ctx.state.profile.homeId);
+  if (myCondo) bindProposal(root, ctx, myCondo);
   const prefs = () => saveProfile(ctx, { prefs: { ...ui.prefs } });
   $('#a-budget').addEventListener('change', (e) => { ui.prefs.maxPrice = e.target.value ? Number(e.target.value) : null; prefs(); });
   $('#a-fast').addEventListener('change', (e) => { ui.prefs.fastOnly = e.target.checked; prefs(); });

@@ -643,4 +643,32 @@ select.bare.big { font-size: 1.1rem; font-weight: 700; }
 .ok-line .ic { width: 18px; height: 18px; }
 .chip.avail .live-dot { width: 7px; height: 7px; margin-right: 4px; display: inline-block; }
 .live-bays .live-dot { width: 9px; height: 9px; border-radius: 50%; background: #1E9E5A; flex: none; margin-top: 6px; }
+/* Auto-share comparison, resident votes, the resident statement */
+.inforce { display: flex; gap: 8px; align-items: flex-start; flex-wrap: wrap; }
+.auto-compare { background: var(--bg); border-radius: 14px; padding: 12px; display: grid; gap: 8px; }
+.cmp { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.cmp div { background: var(--surface); border-radius: 12px; padding: 10px 12px; display: grid; gap: 2px; box-shadow: var(--shadow-sm); }
+.cmp span { font-size: 0.8rem; color: var(--muted); font-weight: 600; }
+.cmp b { font-size: 1.3rem; font-variant-numeric: tabular-nums; }
+.cmp small { color: var(--muted); }
+.cmp .win { outline: 2px solid var(--accent); }
+.cmp .win span { color: var(--accent); }
+.vote-card { border: 1px solid var(--line); border-radius: 14px; padding: 12px; display: grid; gap: 8px; }
+.vote-head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 0.9rem; }
+.tally { height: 10px; border-radius: 999px; background: var(--busy-soft); overflow: hidden; }
+.tally span { display: block; height: 100%; background: var(--accent); }
+.vote-btns .btn { flex: 1; }
+.propose summary { cursor: pointer; font-weight: 600; color: var(--accent); }
+.propose .form { margin-top: 10px; }
+.statement { background: var(--surface); border-radius: 18px; box-shadow: var(--shadow-sm); padding: 16px; display: grid; gap: 10px; }
+.big-save { font-size: 1.05rem; }
+.big-save b { font-size: 2rem; color: var(--accent); letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.srows { display: grid; gap: 6px; }
+.srows div { display: flex; justify-content: space-between; gap: 12px; border-top: 1px solid var(--line); padding-top: 6px; }
+.srows span { color: var(--muted); }
+.statement table td:last-child { text-align: right; font-variant-numeric: tabular-nums; }
+.statement tr.total td { font-weight: 700; border-top: 2px solid var(--fg); }
+.statement tr.hero-row td { color: var(--accent); font-weight: 700; }
+.banner.vote { background: var(--amber-soft); color: #6B4206; }
+.banner.vote .ic { fill: none; stroke: currentColor; }
 [hidden] { display: none !important; } /* the hidden attribute must win over display rules like .detail { display: grid } */

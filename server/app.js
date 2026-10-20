@@ -13,6 +13,7 @@ import { validateEntry, cleanEntry, faultBays } from '../engine/maintenance.js';
 import { createStore } from './store.js';
 import { createCsms } from './ocpp.js';
 import { createTomTom, parsePoints, parseBbox } from './tomtom.js';
+import { createProposal, castVote, tally, closeProposal } from '../engine/governance.js';
 import { createAuth } from './auth.js';
 import { cleanSession, cleanBooking, cleanCheckin, cleanSharing } from './validate.js';
 
@@ -222,6 +223,68 @@ export function createApp({ dataDir, secret, pins, ocmKey = '', ocppPassword = c
     store.data.sharing[condo.id] = next;
     store.save();
     res.json({ sharing: next });
+  });
+
+  // ---- Residents vote on sharing changes ----
+  const publicProposal = (condo) => {
+    const p = store.data.proposals[condo.id];
+    if (!p) return { proposal: null };
+    const { votes, ...rest } = p;
+    return { proposal: rest, tally: tally(p, condo.units) };
+  };
+  const voterKey = (id) => crypto.createHash('sha256').update(`cascas-vote:${id}`).digest('hex').slice(0, 24);
+
+  app.get('/api/condos/:condoId/proposal', (req, res) => {
+    const condo = condoWithSharing(req.params.condoId);
+    if (!condo) return bad(res, 'Unknown condo', 404);
+    res.json(publicProposal(condo));
+  });
+
+  app.post('/api/condos/:condoId/proposal/vote', (req, res) => {
+    const condo = condoWithSharing(req.params.condoId);
+    const p = condo && store.data.proposals[condo.id];
+    if (!p) return bad(res, 'No vote is open for this condo', 404);
+    const voter = String(req.body?.voterId || '');
+    if (!/^[A-Za-z0-9-]{8,64}$/.test(voter)) return bad(res, 'Invalid voter');
+    const r = castVote(p, voterKey(voter), req.body?.vote, now());
+    if (r.error) return bad(res, r.error, r.error.includes('closed') ? 409 : 400);
+    store.data.proposals[condo.id] = r.proposal;
+    store.save();
+    res.json(publicProposal(condo));
+  });
+
+  app.post('/api/jmb/:condoId/proposal', requireJmb, (req, res) => {
+    const condo = condoWithSharing(req.params.condoId);
+    const next = cleanSharing(req.body?.settings);
+    const err = next ? validateSharing(next, condo.bays) : 'Invalid settings';
+    if (err) return bad(res, err);
+    store.data.proposals[condo.id] = createProposal({ id: crypto.randomUUID(), condoId: condo.id, settings: next, now: now() });
+    store.save();
+    res.status(201).json(publicProposal(condo));
+  });
+
+  app.post('/api/jmb/:condoId/proposal/close', requireJmb, (req, res) => {
+    const condo = condoWithSharing(req.params.condoId);
+    const p = store.data.proposals[condo.id];
+    if (!p || p.status !== 'open') return bad(res, 'No open vote', 409);
+    const closed = closeProposal(p, condo.units, now());
+    store.data.proposals[condo.id] = closed;
+    if (closed.status === 'passed') store.data.sharing[condo.id] = closed.settings;
+    store.save();
+    res.json(publicProposal(condoWithSharing(condo.id)));
+  });
+
+  // Demo only: fill in votes from simulated residents, labelled as such in the proposal.
+  app.post('/api/jmb/:condoId/proposal/sample', requireJmb, (req, res) => {
+    const condo = condoWithSharing(req.params.condoId);
+    let p = store.data.proposals[condo.id];
+    if (!p || p.status !== 'open') return bad(res, 'No open vote', 409);
+    const n = Math.min(condo.units, Math.max(1, Math.round(condo.units * 0.18)));
+    for (let i = 0; i < n; i++) p = castVote(p, `sample-${i}`, i % 10 < 7 ? 'yes' : 'no', now()).proposal;
+    p = { ...p, sampleVotes: n };
+    store.data.proposals[condo.id] = p;
+    store.save();
+    res.json(publicProposal(condo));
   });
 
   // Live OCPP status of a condo's bays: no personal data, so it is public like the map.
