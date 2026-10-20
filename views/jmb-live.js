@@ -34,7 +34,7 @@ function body(condo, snap, canAct) {
       <td>${p.status === 'Charging' ? `${p.sessionKwh.toFixed(1)} kWh` : '—'}</td><td>${act}</td></tr>`;
   }).join('');
   return `<div class="card-head"><h3>Live chargers (OCPP 1.6)</h3><span class="chip on">${snap.simulated ? 'Simulated chargers' : 'Connected'}</span></div>
-    <p class="muted">${s.charging} charging · ${s.available} free${s.faulted ? ` · ${s.faulted} faulted` : ''}${s.offline ? ` · ${s.offline} offline` : ''}. Each charger talks OCPP 1.6-J to CasCas: status, meter values and sessions come in; power limits go out.</p>
+    <p class="muted">${s.charging} charging · ${s.available} free${s.faulted ? ` · ${s.faulted} faulted` : ''}${s.offline ? ` · ${s.offline} offline` : ''}. Each charger talks OCPP 1.6-J to CasSama: status, meter values and sessions come in; power limits go out.</p>
     <p><b>Site load ${snap.loadKw.toFixed(1)} kW</b> of a ${num(snap.limitKw)} kW safe limit. When many bays charge, smart charging (SetChargingProfile) lowers each bay's cap so the total stays inside it.</p>
     <div class="bar" role="img" aria-label="Site load ${Math.round(loadPct)}% of the limit"><span style="width:${loadPct}%"></span></div>
     <div class="tbl"><table><thead><tr><th>Bay</th><th>Status</th><th>Power</th><th>This session</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>

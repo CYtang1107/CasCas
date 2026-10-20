@@ -21,7 +21,7 @@ saveState(state);
 document.documentElement.dataset.theme = state.profile.theme; // chosen in Account
 let clock = CLOCK_PRESETS[0].date();
 let chargers = null; // set once chargers are loaded
-let api = null; // set in shared mode (a CasCas server answered)
+let api = null; // set in shared mode (a CasSama server answered)
 let shared = { sharing: {}, checkins: {}, activeBays: {}, faultBays: {}, live: {} };
 
 // Bays the JMB logged as faulty (and not yet repaired) count as taken for drivers.

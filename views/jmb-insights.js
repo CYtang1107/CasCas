@@ -1,4 +1,4 @@
-// JMB cards: did drivers follow CasCas's picks (anonymous), and which visitors are expected (plates).
+// JMB cards: did drivers follow CasSama's picks (anonymous), and which visitors are expected (plates).
 import { MODES } from '../engine/score.js';
 import { simulateHistory } from '../engine/history.js';
 import { filterSessions, followRate, savings, weeklyTrend, byMode, toCsv, CHOICE_LABEL, anonLabel, overstayTotals } from '../engine/insights.js';
@@ -34,22 +34,22 @@ export function insightsSection(condo, charger, ctx, real) {
     <section class="card insights">
       <div class="card-head"><h3>Driver behaviour</h3><span class="chip">Simulated history + your demo bookings</span></div>
       <div class="kpis">
-        <div class="kpi hero"><span>Took a CasCas pick (30 days)</span><b>${pct(followRate(recent))}</b></div>
+        <div class="kpi hero"><span>Took a CasSama pick (30 days)</span><b>${pct(followRate(recent))}</b></div>
         <div class="kpi"><span>Saved per session vs nearest</span><b>${rm(s30.avgRm)}</b></div>
         <div class="kpi"><span>Saved by drivers this month</span><b>${rm0(savings(month).totalRm)}</b></div>
         <div class="kpi"><span>Sessions (30 days)</span><b>${num(recent.length)}</b></div>
       </div>
       <div class="grid2">
-        <div><h4>Share of bookings that took a CasCas pick, by week</h4>
+        <div><h4>Share of bookings that took a CasSama pick, by week</h4>
           ${lineChart({
             labels: trend.map((w, i) => (i % 2 ? '' : fmtDay(new Date(w.weekStart)))),
-            series: [{ label: 'Took a CasCas pick', values: trend.map((w) => Math.round(w.followRate * 100)), cls: 'la' }],
-            money: false, unit: '%', ariaLabel: 'Weekly share of bookings that took a CasCas pick',
+            series: [{ label: 'Took a CasSama pick', values: trend.map((w) => Math.round(w.followRate * 100)), cls: 'la' }],
+            money: false, unit: '%', ariaLabel: 'Weekly share of bookings that took a CasSama pick',
           })}
         </div>
         <div><h4>By battery mode (30 days)</h4>
           <div class="tbl"><table>
-            <thead><tr><th>Mode</th><th>Sessions</th><th>Took a CasCas pick</th></tr></thead>
+            <thead><tr><th>Mode</th><th>Sessions</th><th>Took a CasSama pick</th></tr></thead>
             <tbody>${byMode(recent).map((g) => `<tr><td>${MODES[g.key].label}</td><td>${num(g.count)}</td><td>${g.count ? pct(g.followRate) : '—'}</td></tr>`).join('')}</tbody>
           </table></div>
           <p class="muted">Average time vs the nearest charger: ${s30.avgMinutes > 0 ? '+' : ''}${s30.avgMinutes} min. Saver drivers accept a short detour for a lower price.</p>
@@ -84,7 +84,7 @@ export function insightsSection(condo, charger, ctx, real) {
       const url = URL.createObjectURL(new Blob([toCsv([...rows].reverse())], { type: 'text/csv' }));
       const a = document.createElement('a');
       a.href = url;
-      a.download = `cascas-${condo.id}-sessions.csv`;
+      a.download = `cassama-${condo.id}-sessions.csv`;
       a.click();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
     });

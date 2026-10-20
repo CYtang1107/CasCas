@@ -1,5 +1,5 @@
 export const APP = {
-  name: 'CasCas',
+  name: 'CasSama',
   tagline: 'Charge together. Earn together.',
   township: 'KL East',
 };

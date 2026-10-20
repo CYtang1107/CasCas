@@ -28,7 +28,7 @@ test('requests use relative URLs, tokens and bodies as the server expects', asyn
   assert.deepEqual(JSON.parse(calls[3].body), { sharing: { enabled: true } });
 });
 
-test('detectServer: true only for a real CasCas health reply', async () => {
+test('detectServer: true only for a real CasSama health reply', async () => {
   assert.equal(await detectServer(createApi({ fetchFn: reply(200, { ok: true }) })), true);
   assert.equal(await detectServer(createApi({ fetchFn: reply(404, null) })), false); // GitHub Pages
   assert.equal(await detectServer(createApi({ fetchFn: async () => { throw new Error('x'); } })), false);

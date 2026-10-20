@@ -1,4 +1,4 @@
-// Start the CasCas shared server. Sharing hours are Malaysian time, whatever the host's clock.
+// Start the CasSama shared server. Sharing hours are Malaysian time, whatever the host's clock.
 process.env.TZ = process.env.TZ || 'Asia/Kuala_Lumpur';
 
 const crypto = await import('node:crypto');
@@ -25,7 +25,7 @@ const app = createApp({
 
 const port = Number(process.env.PORT) || 4300;
 const server = app.listen(port, () => {
-  console.log(`CasCas shared server on http://localhost:${port} · OCPP 1.6-J at ws://localhost:${port}/ocpp/<condo>-<bay>`);
+  console.log(`CasSama shared server on http://localhost:${port} · OCPP 1.6-J at ws://localhost:${port}/ocpp/<condo>-<bay>`);
   if (process.env.OCPP_SIM !== '0') {
     app.locals.sim = startSimulator({ url: `ws://127.0.0.1:${port}`, password: ocppPassword, condos: CONDOS });
     console.log('Simulated OCPP chargers started (OCPP_SIM=0 turns them off)');

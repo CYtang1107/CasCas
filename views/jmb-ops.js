@@ -123,7 +123,7 @@ export function reportCsv(condo, charger, sim, { month, sessions, entries }) {
       ['Saving per unit (RM)', r.perUnit],
       ['Break-even (kWh)', r.breakEvenKwh ? Math.round(r.breakEvenKwh) : 'not reached'],
       ['CO2 avoided (kg)', Math.round(sim.co2AvoidedKg)],
-      ['Bookings through CasCas this month', sessions],
+      ['Bookings through CasSama this month', sessions],
       ['Faults logged (all time)', faults],
       ['Basis', 'Simulated demand plus demo bookings; costs per proposal section 6.2'],
     ],

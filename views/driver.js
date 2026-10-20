@@ -168,8 +168,8 @@ export function renderDriver(root, ctx, which = 'home') {
   if (map) { map.remove(); map = null; }
   const { condos } = ctx.world;
   const askForm = (big) => `<form id="d-ask" class="ask ${big ? 'big' : ''}" role="search" novalidate>
-        <label class="search"><span class="sr-only">Ask CasCas</span>${IC.search}
-          <input id="d-ask-text" type="search" maxlength="200" autocomplete="off" enterkeyhint="go" placeholder="Ask CasCas: “Atto 3 at 71%, going to Melaka”" value="${esc(ui.ask)}"></label>
+        <label class="search"><span class="sr-only">Ask CasSama</span>${IC.search}
+          <input id="d-ask-text" type="search" maxlength="200" autocomplete="off" enterkeyhint="go" placeholder="Ask CasSama: “Atto 3 at 71%, going to Melaka”" value="${esc(ui.ask)}"></label>
         <button class="btn primary" type="submit">Go</button>
       </form>
       ${ui.askNote ? `<p class="ask-note" role="status">${esc(ui.askNote)}</p>` : ''}`;
@@ -422,7 +422,7 @@ function accountHtml(ctx) {
       <a class="arow" href="jmb.html">${IC.building}<span>Manage a condo? JMB portal</span><span class="chev" aria-hidden="true">›</span></a>
     </div>
     <div class="adrop" id="a-faq" hidden>
-      <p><b>How does CasCas pick a charger?</b> By your battery: low battery puts the quickest working charger first, a full one puts cheaper and quieter ones first. Your budget, speed and operator preferences come on top.</p>
+      <p><b>How does CasSama pick a charger?</b> By your battery: low battery puts the quickest working charger first, a full one puts cheaper and quieter ones first. Your budget, speed and operator preferences come on top.</p>
       <p><b>Can I charge at a condo I don't live in?</b> Yes, during the hours its JMB shares bays. Book, enter your plate, and the guardhouse lets you in.</p>
       <p><b>What if I stay too long?</b> After your slot it is ${rm(CONST.overstayRmPer10Min)} per 10 minutes, paid to the condo, so the next driver can charge.</p>
     </div>
@@ -434,7 +434,7 @@ function accountHtml(ctx) {
     </div>
     <section class="about"><p class="muted">${esc(source)}${mode ? ` · ${esc(mode)}` : ''}</p>
       <button class="btn danger" type="button" data-reset>Reset demo</button>
-      <p class="version">CasCas prototype · version 0.9</p></section>`;
+      <p class="version">CasSama prototype · version 0.9</p></section>`;
 }
 
 // "My condo earned": this month's charging income for the resident's condo, and their vote.
@@ -572,7 +572,7 @@ function hasPrefs() {
   return ui.prefs.maxPrice != null || ui.prefs.fastOnly || !!ui.prefs.operator;
 }
 
-// Apply what Ask CasCas understood, then redraw the page so every field shows it.
+// Apply what Ask CasSama understood, then redraw the page so every field shows it.
 function ask(root, ctx, text) {
   ui.ask = text;
   const { set, understood } = parseRequest(text, { cars: CARS, places: ALL_PLACES });
@@ -607,7 +607,7 @@ function useLocation(root, ctx, { quiet = false } = {}) {
     },
     (err) => {
       if (quiet) return;
-      ui.locMsg = err.code === 1 ? 'Location is off for this site, so CasCas starts from KL East. Allow it in the browser, or type your start.'
+      ui.locMsg = err.code === 1 ? 'Location is off for this site, so CasSama starts from KL East. Allow it in the browser, or type your start.'
         : 'Could not find your location just now. Starting from KL East.';
       if (tab === 'plan') renderDriver(root, ctx, 'plan');
     },
@@ -723,7 +723,7 @@ function tripHtml(t, place, ctx, rd = null) {
     <p class="trip-total"><b>${formatDuration(tot.totalMin)}</b> total trip · ${Math.round(tot.km)} km · ${formatDuration(tot.chargeMin || 0.01)} charging${tot.cost ? ` · ${rm(tot.cost)} to charge` : ''}</p>
     <ol class="trip">${items.join('')}</ol>
     ${roadNote(t, rd, ctx)}
-    <p class="muted">${t.stops.length ? 'CasCas charges only what the next leg needs, and never past 80%, where fast charging slows down, so stops stay short.' : `No stop needed: you arrive with ${Math.round(t.arrivePct)}%.`} Highway chargers are demo data.</p>
+    <p class="muted">${t.stops.length ? 'CasSama charges only what the next leg needs, and never past 80%, where fast charging slows down, so stops stay short.' : `No stop needed: you arrive with ${Math.round(t.arrivePct)}%.`} Highway chargers are demo data.</p>
     ${stepsHtml(rd)}
     <div class="btn-row"><a class="btn primary grow" href="${esc(t.directionsUrl)}" target="_blank" rel="noopener">${IC.nav}Start in Google Maps</a>
       <a class="btn" href="https://waze.com/ul?ll=${(t.stops[0]?.charger || place).lat},${(t.stops[0]?.charger || place).lng}&navigate=yes" target="_blank" rel="noopener">Waze${t.stops.length ? ' to stop 1' : ''}</a></div>`;
@@ -832,7 +832,7 @@ function heroCard(c) {
   return `
     <article class="pick hero">
       <div class="hero-art">${siteArt(c.charger, c.charger.name)}</div>
-      <div class="hero-tags"><span class="eyebrow-tag">CasCas pick</span>${c.isSharedVisit ? '<span class="chip amber-tag">Shared now</span>' : ''}${c.isResident ? `<span class="chip">${IC.home}Your condo</span>` : ''}</div>
+      <div class="hero-tags"><span class="eyebrow-tag">CasSama pick</span>${c.isSharedVisit ? '<span class="chip amber-tag">Shared now</span>' : ''}${c.isResident ? `<span class="chip">${IC.home}Your condo</span>` : ''}</div>
       <h3>${esc(c.charger.name)}</h3>
       <p class="muted">${esc(c.charger.operator)} · ${esc(c.charger.connectors.join(', '))}</p>
       <div class="facts">${availChip(c.charger, c.occupancy)}<span>${IC.pin}${c.km < 1 ? `${Math.round(c.km * 1000)} m` : `${c.km.toFixed(1)} km`}</span><span>${IC.bolt}${c.charger.kw} kW</span></div>

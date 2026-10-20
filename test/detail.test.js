@@ -12,7 +12,7 @@ const ranking = { kWh: 27, results: [result('x'), result('a', { reasons: ['RM35.
 test('a ranked charger gets its verdict, trip numbers and booking', () => {
   const d = describeCharger({ charger: charger(), ranking, date: wed11, checkins: [] });
   assert.equal(d.rank, 2);
-  assert.equal(d.verdict, 'CasCas pick #2');
+  assert.equal(d.verdict, 'CasSama pick #2');
   assert.equal(d.bookable, true);
   assert.deepEqual(d.trip, { cost: 35.1, kWh: 27, addedKm: 180, walkMin: 3, detourMin: 2, full: true });
   assert.equal(d.reliabilityPct, 90);

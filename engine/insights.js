@@ -1,4 +1,4 @@
-// Did drivers follow CasCas's recommendation, and what did it save them vs the nearest charger?
+// Did drivers follow CasSama's recommendation, and what did it save them vs the nearest charger?
 import { round2, overstayFee } from './pricing.js';
 
 export const CHOICE_LABEL = { pick1: 'Top pick', pick2: '2nd pick', pick3: '3rd pick', own: 'Own choice' };

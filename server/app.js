@@ -1,4 +1,4 @@
-// CasCas shared server: serves the website and a small JSON API (bookings, passes, check-ins, JMB).
+// CasSama shared server: serves the website and a small JSON API (bookings, passes, check-ins, JMB).
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';

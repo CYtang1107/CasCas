@@ -46,7 +46,7 @@ export function describeCharger({ charger, ranking, condo = null, date, isReside
 
   let verdict;
   if (!(ranking?.kWh > 0)) verdict = 'No charge needed for this trip';
-  else if (r) verdict = idx < 3 ? `CasCas pick #${idx + 1}` : `Ranked #${idx + 1} of ${results.length}`;
+  else if (r) verdict = idx < 3 ? `CasSama pick #${idx + 1}` : `Ranked #${idx + 1} of ${results.length}`;
   else if (off) verdict = `Not suitable now: ${off.reason}`;
   else verdict = 'Not in range of this trip';
 

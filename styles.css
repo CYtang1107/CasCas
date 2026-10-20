@@ -215,7 +215,7 @@ fieldset.plain:disabled { opacity: 0.6; }
 .jmb-auth { display: flex; align-items: center; gap: 12px; margin-top: 16px; }
 .jmb-login { margin-top: 16px; }
 
-/* Ask CasCas, preferences, smart schedule, price comparison */
+/* Ask CasSama, preferences, smart schedule, price comparison */
 .ask { display: flex; gap: 10px; align-items: flex-end; margin-bottom: 12px; }
 .ask .grow { flex: 1; min-width: 0; }
 .ask-note { background: var(--accent-soft); border-radius: 8px; padding: 8px 12px; font-size: 0.88rem; margin: 0 0 12px; }

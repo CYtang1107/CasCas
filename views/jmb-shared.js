@@ -64,7 +64,7 @@ function loginCard(condo, ctx, e) {
         <button class="btn primary" type="submit">Log in</button>
       </form>
       <p id="j-login-err" class="error" role="alert" hidden></p>
-      ${s ? `<p class="muted">Shared demo so far at this condo: ${num(s.count)} booking${s.count === 1 ? '' : 's'}${s.count ? ` · ${pct(s.followRate)} took a CasCas pick · ${rm(s.savedRm)} saved vs nearest` : ''}.</p>` : ''}
+      ${s ? `<p class="muted">Shared demo so far at this condo: ${num(s.count)} booking${s.count === 1 ? '' : 's'}${s.count ? ` · ${pct(s.followRate)} took a CasSama pick · ${rm(s.savedRm)} saved vs nearest` : ''}.</p>` : ''}
     </section>`;
   const bind = (root) => {
     root.querySelector('#j-login').addEventListener('submit', async (ev) => {

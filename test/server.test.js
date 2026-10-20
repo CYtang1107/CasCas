@@ -34,7 +34,7 @@ test('health, static files and no data files served', async () => {
   assert.deepEqual((await s.call('GET', '/api/health')).body, { ok: true });
   const page = await s.raw('GET', '/');
   assert.equal(page.status, 200);
-  assert.ok((await page.text()).includes('CasCas'));
+  assert.ok((await page.text()).includes('CasSama'));
   assert.equal(page.headers.get('cache-control'), 'no-cache');
   assert.equal((await s.raw('GET', '/server/data/store.json')).status, 404);
   assert.equal((await s.raw('GET', '/package.json')).status, 404);

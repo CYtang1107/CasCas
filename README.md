@@ -1,4 +1,6 @@
-# CasCas
+# CasSama
+
+*Formerly CasCas. The GitHub repo and the demo links keep the old name so existing links still work.*
 
 Shared EV charging for Sime Darby Property townships. Prototype for the SDP University Hackathon 2026 (Planet track).
 
@@ -6,15 +8,15 @@ Two front doors, one codebase:
 
 | | Shared demo (Render) | This device only (GitHub Pages) |
 |---|---|---|
-| **Driver app** (Home, Map, Plan, Activity, Account) | https://cascas-ivi8.onrender.com/ | https://cytang1107.github.io/CasCas/ |
-| **JMB portal** | https://cascas-ivi8.onrender.com/jmb.html | https://cytang1107.github.io/CasCas/jmb.html |
+| **Driver app** (Home, Map, Plan, Activity, Account) | https://cascas-ivi8.onrender.com/ | https://cytang1107.github.io/CasSama/ |
+| **JMB portal** | https://cascas-ivi8.onrender.com/jmb.html | https://cytang1107.github.io/CasSama/jmb.html |
 
 A condo's own portal link: add its id, e.g. `jmb.html#lumina`. Bookings made in the driver app show up in the portal (live on Render).
 
 ## What it shows
 
-- **Driver:** battery-aware picks across every provider around KL East. Low battery gets the nearest working charger; high battery gets cheaper, quieter ones, with demand balancing that keeps busy fast chargers free for drivers who need them. Every booking records (anonymously) whether the driver took a CasCas pick and what it saved vs the nearest charger.
-- **Ask CasCas:** type a trip in plain English ("Atto 3 at 20%, going to KL East Mall for 2 hours, under RM1.20, prefer Gentari") and the form fills itself. Rule-based, so it works offline and never guesses.
+- **Driver:** battery-aware picks across every provider around KL East. Low battery gets the nearest working charger; high battery gets cheaper, quieter ones, with demand balancing that keeps busy fast chargers free for drivers who need them. Every booking records (anonymously) whether the driver took a CasSama pick and what it saved vs the nearest charger.
+- **Ask CasSama:** type a trip in plain English ("Atto 3 at 20%, going to KL East Mall for 2 hours, under RM1.20, prefer Gentari") and the form fills itself. Rule-based, so it works offline and never guesses.
 - **Long trips:** pick a longer trip (Seremban, Port Dickson, Melaka, Ipoh, Johor Bahru, Penang) or ask "Atto 3 at 71%, going to Melaka, arrive with 23%". The plan shows start battery, each leg, every fast-charging stop (arrive % → leave %, minutes, kWh, cost) and the battery on arrival, on the map too, with Google Maps directions. It charges only what the next leg needs and never past 80%, so stops stay short. Highway chargers are demo data.
 - **From / To:** type any start or destination in Malaysia (our places first, then [Photon](https://photon.komoot.io) OpenStreetMap search) or tap the location button to start from your GPS position, which never leaves the phone. Destinations over about 40 km become a long trip automatically.
 - **Real roads and traffic:** routes come from [OSRM](https://project-osrm.org) (OpenStreetMap routing): the blue road line on the map with its time, an alternative route, turn-by-turn steps, and trip plans re-checked against real road distances. Times are for free-flowing roads, so a typical-traffic estimate for the hour is shown beside them (not live). Live traffic colours come from TomTom when the server has `TOMTOM_KEY`; the server fetches the tiles so the key stays hidden.

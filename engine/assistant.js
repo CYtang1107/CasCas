@@ -1,4 +1,4 @@
-// "Ask CasCas": turn a plain-English request into trip settings. Rule-based, so it runs offline
+// "Ask CasSama": turn a plain-English request into trip settings. Rule-based, so it runs offline
 // and every answer can be explained. Unknown words are ignored; nothing is guessed.
 const OPERATORS = ['Gentari', 'ChargEV', 'JomCharge', 'Tesla'];
 const PLACE_WORDS = { klem: ['kl east mall', 'kl east', 'klem'], melawati: ['melawati'], wangsa: ['wangsa'], klcc: ['klcc'], here: ['near me', 'nearby', 'around here'] };

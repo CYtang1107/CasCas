@@ -1,4 +1,4 @@
-"""CasCas UI v2: four driver-app screens and the JMB portal, built as a FigCraft script."""
+"""CasSama UI v2: four driver-app screens and the JMB portal, built as a FigCraft script."""
 from fc import Doc
 
 # ---- tokens (light) ----
@@ -102,7 +102,7 @@ top = row(hdr, 10, "brand", sizingH="fill", mainAlign="spaceBetween")
 brand = row(top, 10, "logo")
 logo = d.box(brand, "logo mark", fills=["#FFFFFF2E"], cornerRadius=10, padding=6, layout="horizontal")
 icon(logo, "bolt", 18, "#FFFFFF", filled=True)
-t(brand, "CasCas", 19, "Bold", "#FFFFFF")
+t(brand, "CasSama", 19, "Bold", "#FFFFFF")
 bell = d.box(top, "bell", fills=["#FFFFFF24"], cornerRadius=999, padding=8, layout="horizontal")
 icon(bell, "bell", 18, "#FFFFFF")
 t(hdr, "Good morning, Chee Yang", 14, "Medium", "#FFFFFFCC")
@@ -122,7 +122,7 @@ for ic, label, filled in [("route", "Plan a trip", False), ("bolt", "Fast DC", T
 section_head(body, "Best for you now", "Change")
 hero = col(body, 12, "hero pick", sizingH="fill", fills=[SURF], cornerRadius=22, padding=18, effects=SHADOW)
 r = row(hero, 8, "tags")
-chip(r, "CASCAS PICK", ACC_INK, ACC)
+chip(r, "CASSAMA PICK", ACC_INK, ACC)
 chip(r, "Shared now", AMBER, AMBER_SOFT)
 t(hero, "Wangsa Walk Mall AC", 21, "Bold", fill=True)
 m = row(hero, 14, "meta row", wrap=True, sizingH="fill")
@@ -181,7 +181,7 @@ sheet = col(mp, 10, "bottom sheet", w=390, sizingH="fixed", fills=[SURF], corner
 grab = d.rect(sheet, 40, 5, fills=[LINE], cornerRadius=3)
 hr = row(sheet, 8, "head", sizingH="fill", mainAlign="spaceBetween")
 t(hr, "Wangsa Walk Mall AC", 19, "Bold")
-chip(hr, "CasCas #1", ACC_INK, ACC)
+chip(hr, "CasSama #1", ACC_INK, ACC)
 t(sheet, "ChargEV · Type 2 · Level P1 · Open 24 h", 13, "Medium", MUTED)
 m = row(sheet, 14, "facts", wrap=True, sizingH="fill")
 chip(m, "AC 2/4 free")
@@ -267,7 +267,7 @@ b = row(side, 10, "brand", padding=[0, 8, 18, 8])
 lm = d.box(b, "logo", fills=[ACC], cornerRadius=10, padding=7, layout="horizontal")
 icon(lm, "bolt", 18, "#FFFFFF", True)
 bc = col(b, 0, "name")
-t(bc, "CasCas", 18, "Bold")
+t(bc, "CasSama", 18, "Bold")
 t(bc, "JMB PORTAL", 11, "Bold", AMBER, letterSpacing="6%")
 for label, on in [("Overview", True), ("Sharing", False), ("Cost recovery", False), ("Live chargers", False), ("Charger health", False), ("Visitors & drivers", False), ("Reports", False)]:
     it = row(side, 10, label, sizingH="fill", padding=[11, 12, 11, 12], cornerRadius=10, fills=[ACC_SOFT] if on else [])

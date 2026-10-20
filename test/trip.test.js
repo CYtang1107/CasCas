@@ -55,7 +55,7 @@ test('when no charger is reachable it says so', () => {
   assert.match(p.error, /reach/i);
 });
 
-test('Ask CasCas understands a trip and the arrival target', () => {
+test('Ask CasSama understands a trip and the arrival target', () => {
   const r = parseRequest('Atto 3 at 71%, going to Melaka, arrive with 23%', { cars: CARS, places: [...PLACES, ...TRIP_PLACES] });
   assert.equal(r.set.battery, 71);
   assert.equal(r.set.placeId, 'melaka');

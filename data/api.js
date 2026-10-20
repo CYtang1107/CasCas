@@ -1,4 +1,4 @@
-// Browser client for the CasCas shared server. URLs are relative, so on GitHub Pages
+// Browser client for the CasSama shared server. URLs are relative, so on GitHub Pages
 // (no server) the health check gets a 404 and the app stays in local mode.
 const TIMEOUT_MS = 5000;
 

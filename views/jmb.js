@@ -186,6 +186,6 @@ export function renderJmb(root, ctx) {
   $('#j-report').addEventListener('click', () => {
     const sessions = priv.sessions ? filterSessions(priv.sessions, { from: start.getTime(), to: monthEnd }).length : 'n/a (log in)';
     const month = start.toLocaleString('en-MY', { month: 'long', year: 'numeric' });
-    downloadCsv(`cascas-${condo.id}-report-${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, '0')}.csv`, reportCsv(condo, charger, sim, { month, sessions, entries }));
+    downloadCsv(`cassama-${condo.id}-report-${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, '0')}.csv`, reportCsv(condo, charger, sim, { month, sessions, entries }));
   });
 }

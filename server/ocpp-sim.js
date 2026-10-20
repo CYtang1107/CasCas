@@ -30,7 +30,7 @@ export function startSimulator({ url, password, condos, tickMs = 5000, rand = Ma
       c.ws = new WebSocket(`${url}/ocpp/${id}`, 'ocpp1.6', { headers: { authorization: `Basic ${auth}` } });
       c.ws.on('open', () => {
         c.open = true;
-        send('BootNotification', { chargePointVendor: 'CasCas Sim', chargePointModel: 'AC 7 kW' });
+        send('BootNotification', { chargePointVendor: 'CasSama Sim', chargePointModel: 'AC 7 kW' });
         c.status_(c.status === 'Faulted' ? 'Faulted' : 'Available');
       });
       c.ws.on('message', (data) => {
@@ -55,7 +55,7 @@ export function startSimulator({ url, password, condos, tickMs = 5000, rand = Ma
     return c;
   }
 
-  const start = (c) => { c.send('StartTransaction', { connectorId: 1, idTag: 'CASCAS', meterStart: c.energyWh, timestamp: new Date().toISOString() }); c.status_('Charging'); };
+  const start = (c) => { c.send('StartTransaction', { connectorId: 1, idTag: 'CASSAMA', meterStart: c.energyWh, timestamp: new Date().toISOString() }); c.status_('Charging'); };
   const stop = (c) => { c.send('StopTransaction', { transactionId: c.txId ?? 0, meterStop: c.energyWh, timestamp: new Date().toISOString() }); c.txId = null; };
 
   for (const condo of condos) for (let b = 1; b <= condo.bays; b++) {

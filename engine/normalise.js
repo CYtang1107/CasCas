@@ -1,4 +1,4 @@
-// Turn Open Charge Map stations into CasCas chargers.
+// Turn Open Charge Map stations into CasSama chargers.
 import { priceFor } from '../data/operator-prices.js';
 
 const DC_MIN_KW = 25;

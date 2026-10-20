@@ -48,7 +48,7 @@ export function planTrip({ chargers, car, startPct, arriveMinPct = 20, origin, d
         && roadKm(pos, c) + roadKm(c, destination) - toDest <= Math.max(MAX_DETOUR_KM, toDest * 0.08));
       const error = onTheWay
         ? `Cannot reach a fast charger towards ${destination.name} from ${pos.name} with ${Math.round(pct)}%. Charge near home first.`
-        : `CasCas has no fast chargers on the way to ${destination.name} in its data yet (the demo covers the North–South and East Coast highways). Charge to ${Math.min(100, Math.ceil(pctFor(toDest) + arriveMinPct))}% before you go, or pick a closer stop.`;
+        : `CasSama has no fast chargers on the way to ${destination.name} in its data yet (the demo covers the North–South and East Coast highways). Charge to ${Math.min(100, Math.ceil(pctFor(toDest) + arriveMinPct))}% before you go, or pick a closer stop.`;
       return { ok: false, error, legs, stops };
     }
     // Go as far along as safely possible; a faster charger breaks near-ties.

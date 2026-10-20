@@ -1,4 +1,4 @@
-// TomTom data, made to fit CasCas (pure): EV stations with live bay availability, routes that
+// TomTom data, made to fit CasSama (pure): EV stations with live bay availability, routes that
 // include live traffic, and traffic incidents. The server fetches these with the key.
 import { distanceKm } from './geo.js';
 import { priceFor } from '../data/operator-prices.js';

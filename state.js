@@ -1,5 +1,5 @@
 // Per-device demo state. Every storage call is guarded so private windows and blocked storage still work.
-const KEY = 'cascas.v1';
+const KEY = 'cascas.v1'; // the app was called CasCas; the key keeps that name so saved data survives
 export const MAX_SESSIONS = 500;
 // The driver's own settings on this device (no accounts in the prototype).
 const blankProfile = () => ({ name: '', carId: null, homeId: '', prefs: null, theme: 'light' });
