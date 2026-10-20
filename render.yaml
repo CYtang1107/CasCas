@@ -15,5 +15,7 @@ services:
         sync: false
       - key: JMB_SECRET
         generateValue: true
+      - key: TOMTOM_KEY
+        sync: false
       - key: OCPP_PASSWORD
         generateValue: true

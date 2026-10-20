@@ -42,7 +42,7 @@ function chargerSource({ dataDir, fetchFn, key, now }) {
   };
 }
 
-export function createApp({ dataDir, secret, pins, ocmKey = '', ocppPassword = crypto.randomBytes(16).toString('hex'), fetchFn = globalThis.fetch, now = () => Date.now() }) {
+export function createApp({ dataDir, secret, pins, ocmKey = '', ocppPassword = crypto.randomBytes(16).toString('hex'), trafficKey = '', fetchFn = globalThis.fetch, now = () => Date.now() }) {
   const store = createStore(dataDir);
   const csms = createCsms({ store, condos: CONDOS, password: ocppPassword, now });
   const auth = createAuth({ secret, pins, now });
@@ -68,6 +68,30 @@ export function createApp({ dataDir, secret, pins, ocmKey = '', ocppPassword = c
   app.use('/api', express.json({ limit: '50kb' }));
 
   app.get('/api/health', (req, res) => res.json({ ok: true }));
+  app.get('/api/config', (req, res) => res.json({ traffic: !!trafficKey }));
+
+  // Live traffic map tiles from TomTom, fetched here so the key stays on the server. Each tile is
+  // kept for a minute, which saves the free daily quota when many people look at the same area.
+  const tiles = new Map();
+  app.get('/api/traffic/:z/:x/:y.png', async (req, res) => {
+    if (!trafficKey) return bad(res, 'Live traffic is not set up on this server', 404);
+    const [z, x, y] = [req.params.z, req.params.x, req.params.y].map(Number);
+    if (![z, x, y].every(Number.isInteger) || z < 0 || z > 22 || x < 0 || y < 0 || x >= 2 ** z || y >= 2 ** z) return bad(res, 'Bad tile');
+    const key = `${z}/${x}/${y}`;
+    let hit = tiles.get(key);
+    if (!hit || now() - hit.at > 60000) {
+      try {
+        const r = await fetchFn(`https://api.tomtom.com/traffic/map/4/tile/flow/relative0/${key}.png?key=${encodeURIComponent(trafficKey)}&tileSize=256`);
+        if (!r.ok) return bad(res, 'Traffic provider unavailable', 502);
+        hit = { at: now(), body: Buffer.from(await r.arrayBuffer()) };
+        if (tiles.size > 2000) tiles.clear();
+        tiles.set(key, hit);
+      } catch {
+        return bad(res, 'Traffic provider unavailable', 502);
+      }
+    }
+    res.set('Cache-Control', 'public, max-age=60').type('image/png').send(hit.body);
+  });
 
   app.get('/api/chargers', async (req, res) => res.json(await chargers()));
 

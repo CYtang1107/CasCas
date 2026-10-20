@@ -6,11 +6,11 @@ import { distanceKm } from './geo.js';
 import { priceAt, round2 } from './pricing.js';
 
 export const HIGHWAY_KMH = 90;
-const HIGHWAY_USE = 1.15;   // highway speeds use about 15% more energy than town driving
-const MIN_STOP_PCT = 10;    // never plan to reach a charger with less than this
-const MAX_CHARGE_PCT = 80;  // DC charging slows sharply above this
-const MARGIN_PCT = 3;       // spare on top of the arrival target
-const AVG_DC_SHARE = 0.85;  // average power over a session vs the peak rate
+export const HIGHWAY_USE = 1.15;   // highway speeds use about 15% more energy than town driving
+export const MIN_STOP_PCT = 10;    // never plan to reach a charger with less than this
+export const MAX_CHARGE_PCT = 80;  // DC charging slows sharply above this
+export const MARGIN_PCT = 3;       // spare on top of the arrival target
+export const AVG_DC_SHARE = 0.85;  // average power over a session vs the peak rate
 const MAX_DETOUR_KM = 15;   // or 8% of the distance left, on long trips
 
 export const roadKm = (a, b) => distanceKm(a, b) * CONST.roadFactor;
@@ -69,7 +69,7 @@ export function planTrip({ chargers, car, startPct, arriveMinPct = 20, origin, d
   return { ok: false, error: 'This trip needs too many stops to plan.', legs, stops };
 }
 
-function finish(p) {
+export function finish(p) {
   const km = p.legs.reduce((s, l) => s + l.km, 0);
   const driveMin = p.legs.reduce((s, l) => s + l.minutes, 0);
   const chargeMin = p.stops.reduce((s, x) => s + x.minutes, 0);

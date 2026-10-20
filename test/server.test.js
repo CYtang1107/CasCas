@@ -172,3 +172,26 @@ test('the JMB portal has its own page; the driver app no longer has a JMB tab', 
   assert.ok(app.includes('data-role="activity"'));
   await s.close();
 });
+
+test('traffic tiles: off without a key; with one, proxied and the key never reaches the browser', async () => {
+  const off = await start();
+  assert.deepEqual((await off.call('GET', '/api/config')).body, { traffic: false });
+  assert.equal((await off.raw('GET', '/api/traffic/12/3245/2010.png')).status, 404);
+  await off.close();
+  const seen = [];
+  const png = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+  const app = createApp({ dataDir: tmp(), secret: 's', pins: {}, trafficKey: 'tt-secret',
+    fetchFn: async (url) => { seen.push(String(url)); return { ok: true, status: 200, arrayBuffer: async () => png }; } });
+  const server = await new Promise((r) => { const s = app.listen(0, () => r(s)); });
+  const base = `http://127.0.0.1:${server.address().port}`;
+  assert.deepEqual(await (await fetch(`${base}/api/config`)).json(), { traffic: true });
+  const tile = await fetch(`${base}/api/traffic/12/3245/2010.png`);
+  assert.equal(tile.status, 200);
+  assert.equal(tile.headers.get('content-type'), 'image/png');
+  assert.deepEqual(Buffer.from(await tile.arrayBuffer()), png);
+  assert.match(seen[0], /api\.tomtom\.com\/traffic\/map\/4\/tile\/flow\/relative0\/12\/3245\/2010\.png\?key=tt-secret/);
+  await fetch(`${base}/api/traffic/12/3245/2010.png`);
+  assert.equal(seen.length, 1, 'cached for a minute');
+  assert.equal((await fetch(`${base}/api/traffic/99/1/1.png`)).status, 400);
+  await new Promise((r) => server.close(r));
+});

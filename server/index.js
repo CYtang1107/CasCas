@@ -20,6 +20,7 @@ const app = createApp({
   pins,
   ocmKey: process.env.OCM_KEY || '',
   ocppPassword,
+  trafficKey: process.env.TOMTOM_KEY || '',
 });
 
 const port = Number(process.env.PORT) || 4300;

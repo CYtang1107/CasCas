@@ -17,6 +17,7 @@ A condo's own portal link: add its id, e.g. `jmb.html#lumina`. Bookings made in 
 - **Ask CasCas:** type a trip in plain English ("Atto 3 at 20%, going to KL East Mall for 2 hours, under RM1.20, prefer Gentari") and the form fills itself. Rule-based, so it works offline and never guesses.
 - **Long trips:** pick a longer trip (Seremban, Port Dickson, Melaka, Ipoh, Johor Bahru, Penang) or ask "Atto 3 at 71%, going to Melaka, arrive with 23%". The plan shows start battery, each leg, every fast-charging stop (arrive % → leave %, minutes, kWh, cost) and the battery on arrival, on the map too, with Google Maps directions. It charges only what the next leg needs and never past 80%, so stops stay short. Highway chargers are demo data.
 - **From / To:** type any start or destination in Malaysia (our places first, then [Photon](https://photon.komoot.io) OpenStreetMap search) or tap the location button to start from your GPS position, which never leaves the phone. Destinations over about 40 km become a long trip automatically.
+- **Real roads and traffic:** routes come from [OSRM](https://project-osrm.org) (OpenStreetMap routing): the blue road line on the map with its time, an alternative route, turn-by-turn steps, and trip plans re-checked against real road distances. Times are for free-flowing roads, so a typical-traffic estimate for the hour is shown beside them (not live). Live traffic colours come from TomTom when the server has `TOMTOM_KEY`; the server fetches the tiles so the key stays hidden.
 - **Preferences, schedule and prices:** a budget, fast-DC-only and a preferred operator shape the picks; the smart schedule says when the next 24 hours are cheaper (residents at TNB peak are sent to 10 PM off-peak); "Compare prices" lists every suitable charger by the cost of your charge.
 - **Idle-hour sharing:** condo bays open to outside drivers during the hours the JMB sets, with residents first. Visitors enter their number plate and are approved automatically while the condo is sharing.
 - **During the charge:** picks near your destination show the walk ("7 min walk to KL East Mall"); the charging screen gives the slot end time, notifications and the overstay fee that keeps shared bays moving.
@@ -66,6 +67,8 @@ One free Render web service serves both the website and the API (`render.yaml`).
 1. Sign in to render.com with GitHub → **New → Blueprint** → pick this repo → **Apply**.
 2. Optional: set `OCM_KEY` (Open Charge Map key) in the service's Environment tab. The key stays on the server.
 3. Open the service URL. The first visit after 15 minutes idle can take up to a minute while it wakes.
+
+Live traffic: get a free key at developer.tomtom.com (My Dashboard → Keys), then add `TOMTOM_KEY` in Render → Environment. A "Live traffic" chip appears on the Map tab.
 
 OCPP: real chargers would use `OCPP_PASSWORD` (set it in Render). Without it, only the built-in simulator can connect. `OCPP_SIM=0` turns the simulated chargers off.
 

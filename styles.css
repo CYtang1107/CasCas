@@ -597,4 +597,31 @@ select.bare.big { font-size: 1.1rem; font-weight: 700; }
 .suggest li.none { cursor: default; }
 .suggest li.credit { cursor: default; min-height: 0; padding: 6px 16px; font-size: 0.72rem; color: var(--muted); }
 .loc-msg { padding: 0 4px; }
+/* Road routes on the map, like Google Maps: blue line with a white edge, grey alternatives */
+.leaflet-container path.road-casing { stroke: #FFFFFF; stroke-linecap: round; stroke-linejoin: round; }
+.leaflet-container path.road-casing.alt { stroke: #FFFFFF; opacity: 0.8; }
+.leaflet-container path.road-line { stroke: #1A73E8; stroke-linecap: round; stroke-linejoin: round; }
+.leaflet-container path.road-line.alt { stroke: #9AA6A2; }
+.leaflet-container path.trip-line { stroke: var(--accent); }
+.leaflet-tooltip.eta-chip { background: #1A73E8; color: #FFFFFF; border: 0; border-radius: 10px; font: 700 0.8rem/1.2 var(--body); padding: 6px 10px; box-shadow: var(--shadow-sm); }
+.leaflet-tooltip.eta-chip.alt { background: #FFFFFF; color: var(--fg); }
+.leaflet-tooltip.eta-chip::before { display: none; }
+
+/* Trip card: where the numbers come from, traffic and steps */
+.road-note { display: grid; gap: 8px; }
+.road-note p, .road-line-note { display: flex; gap: 8px; align-items: flex-start; font-size: 0.9rem; }
+.road-note .ic, .road-line-note .ic { width: 18px; height: 18px; flex: none; margin-top: 2px; color: var(--accent); }
+.traffic { border-radius: 12px; padding: 10px 12px; }
+.traffic.t-light { background: var(--accent-soft); }
+.traffic.t-moderate { background: var(--amber-soft); }
+.traffic.t-heavy { background: var(--busy-soft); }
+.traffic.t-heavy .ic { color: var(--busy); }
+.traffic.t-moderate .ic { color: var(--amber); }
+.warn-line { background: var(--busy-soft); color: var(--busy); border-radius: 12px; padding: 10px 12px; font-weight: 600; }
+.steps { background: var(--surface); border-radius: 16px; box-shadow: var(--shadow-sm); padding: 12px 16px; }
+.steps summary { cursor: pointer; font-weight: 600; }
+.steps ol { margin: 10px 0 0; padding-left: 22px; display: grid; gap: 6px; max-height: 320px; overflow-y: auto; }
+.steps li { display: flex; justify-content: space-between; gap: 12px; font-size: 0.9rem; }
+.steps li.stop { font-weight: 700; color: var(--accent); }
+.road-line-note { background: var(--accent-soft); border-radius: 12px; padding: 10px 12px; }
 [hidden] { display: none !important; } /* the hidden attribute must win over display rules like .detail { display: grid } */

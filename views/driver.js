@@ -15,6 +15,7 @@ import { co2AvoidedKg as co2Kg } from '../engine/economics.js';
 import { searchSites, categoryOf, remember } from '../engine/search.js';
 import { searchPlaces, localMatches, isTrip } from '../engine/geocode.js';
 import { CONDOS } from '../data/condos.js';
+import { osrmUrl, parseOsrm, stepText, typicalTraffic, refineTrip } from '../engine/roads.js';
 import { bestWindow } from '../engine/schedule.js';
 import { parseRequest } from '../engine/assistant.js';
 import { planTrip } from '../engine/trip.js';
@@ -64,6 +65,39 @@ const IC = {
 };
 const availChip = (ch, occ) => { const a = availability(ch, occ); return `<span class="chip avail ${a.free ? 'on' : 'warn'}">${ch.type} ${a.free}/${a.total} free</span>`; };
 const navUrl = (ch) => `https://www.google.com/maps/dir/?api=1&destination=${ch.lat},${ch.lng}`;
+// ---- Real roads (OSRM) ----
+// Routes are fetched once per set of points and kept; while one loads, the plan shows the estimate.
+const roads = new Map(); // key -> { status: 'loading' | 'ok' | 'failed', routes }
+const roadKey = (pts, alt) => `${alt ? 'a' : 'r'}:${pts.map((p) => `${p.lat.toFixed(4)},${p.lng.toFixed(4)}`).join(';')}`;
+function road(points, { alternatives = false } = {}) {
+  // Only a rounded point (about 100 m) goes to the route service, never the exact GPS fix.
+  const pts = points.map((p) => ({ lat: Math.round(p.lat * 1000) / 1000, lng: Math.round(p.lng * 1000) / 1000 }));
+  const key = roadKey(pts, alternatives);
+  const hit = roads.get(key);
+  if (hit) return hit;
+  const entry = { status: 'loading', routes: [] };
+  roads.set(key, entry);
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 8000);
+  fetch(osrmUrl(pts, { alternatives, steps: true }), { signal: ctrl.signal })
+    .then((r) => (r.ok ? r.json() : null))
+    .then((j) => { entry.routes = parseOsrm(j); entry.status = entry.routes.length ? 'ok' : 'failed'; })
+    .catch(() => { entry.status = 'failed'; })
+    .finally(() => {
+      clearTimeout(timer);
+      if (current && (tab === 'plan' || tab === 'map' || tab === 'home')) update(current.root, current.ctx);
+    });
+  return entry;
+}
+let trafficOn = false;
+let trafficLayer = null;
+let trafficAvailable = null; // null = not asked yet
+async function checkTraffic(ctx) {
+  if (trafficAvailable !== null || !ctx.api) { if (!ctx.api) trafficAvailable = false; return; }
+  try { trafficAvailable = !!(await (await fetch('api/config')).json()).traffic; } catch { trafficAvailable = false; }
+  if (current && tab === 'map') { const bar = current.root.querySelector('.map-filters'); if (bar) { bar.innerHTML = filterBarHtml(); bindFilterBar(current.root, current.ctx); } }
+}
+
 // Start point: your GPS position or a place you typed, else your condo, else KL East.
 function originPoint() {
   if (ui.from) return ui.from;
@@ -222,6 +256,8 @@ export function renderDriver(root, ctx, which = 'home') {
   }
 
   if ($('#d-map')) initMap($('#d-map'), $('#d-map-fallback'));
+  if (map && trafficOn) setTraffic(true);
+  if (which === 'map') checkTraffic(ctx);
   update(root, ctx);
   if (which === 'map' && ui.selected) focusSelected();
   if (ui.stage === 'charging' && !timer) startTimer();
@@ -350,7 +386,7 @@ function accountHtml(ctx) {
       <p><b>What if I stay too long?</b> After your slot it is ${rm(CONST.overstayRmPer10Min)} per 10 minutes, paid to the condo, so the next driver can charge.</p>
     </div>
     <div class="adrop" id="a-privacy" hidden>
-      <p>Bookings are logged by an anonymous ID such as "Visitor #48". Your number plate is shown only to that condo's management, behind its PIN, and deleted 30 days after the visit. Your name, car and saved chargers stay on this device.</p>
+      <p>Bookings are logged by an anonymous ID such as "Visitor #48". Your number plate is shown only to that condo's management, behind its PIN, and deleted 30 days after the visit. Your name, car and saved chargers stay on this device. To draw road routes, the start and end points go to OpenStreetMap routing (OSRM), rounded to about 100 m; typed place names go to Photon place search.</p>
     </div>
     <div class="adrop" id="a-terms" hidden>
       <p>This is a prototype for the Sime Darby Property University Hackathon 2026. Condo bays, occupancy, history and highway chargers are simulated; condo names are fictional. Public chargers come from Open Charge Map when the server has a key. Nothing here takes payment.</p>
@@ -428,23 +464,30 @@ function compute(ctx) {
     ...ctx.world, car, batteryPct: ui.battery, origin, destination, date: ctx.clock,
     residentCondoId: ui.homeId || null, parkFor: ui.parkFor, prefs: ui.prefs,
   });
-  const trip = place.trip
+  let trip = place.trip
     ? planTrip({ chargers: [...HIGHWAY_CHARGERS, ...ctx.world.chargers], car, startPct: ui.battery, arriveMinPct: ui.arriveMin,
       origin: { ...origin, name: start.name }, destination: place, date: ctx.clock })
     : null;
-  return { car, origin, ranking, trip, place };
+  let tripRoad = null;
+  if (trip?.ok) {
+    tripRoad = road([origin, ...trip.stops.map((x) => x.charger), place], { alternatives: trip.stops.length === 0 });
+    const best = tripRoad.routes[0];
+    if (best && best.legs.length === trip.legs.length) trip = refineTrip(trip, best.legs, car, ui.arriveMin, ctx.clock);
+  }
+  return { car, origin, ranking, trip, place, tripRoad };
 }
 
 function update(root, ctx) {
-  const { car, origin, ranking, trip, place } = compute(ctx);
+  const { car, origin, ranking, trip, place, tripRoad } = compute(ctx);
   const $ = (sel) => root.querySelector(sel);
   if ($('#d-batt-out')) $('#d-batt-out').textContent = `${ui.battery}%`;
   if ($('#d-vspec')) $('#d-vspec').innerHTML = `<span class="chip off">${car.batteryKwh} kWh</span><span class="chip off">${esc(car.connectors.join(' · '))}</span>`;
   if ($('#d-arrive-out')) $('#d-arrive-out').textContent = `${ui.arriveMin}%`;
   last = { ranking, car };
   drawMarkers(root, ctx, origin, ranking, car);
-  drawTrip(origin, trip, place);
-  if ($('#d-results')) $('#d-results').innerHTML = trip ? tripHtml(trip, place, ctx) : pickHtml(ranking, ctx);
+  drawTrip(origin, trip, place, tripRoad);
+  drawPickRoute(origin, trip, ctx);
+  if ($('#d-results')) $('#d-results').innerHTML = trip ? tripHtml(trip, place, ctx, tripRoad) : pickHtml(ranking, ctx);
   if ($('#d-home-body')) $('#d-home-body').innerHTML = homeHtml(ranking, ctx, trip, place);
   if ($('#d-activity')) $('#d-activity').innerHTML = activityHtml(ctx, ranking);
   bind(root, ctx, ranking, car);
@@ -485,7 +528,7 @@ function useLocation(root, ctx, { quiet = false } = {}) {
   navigator.geolocation.getCurrentPosition(
     (pos) => {
       ui.from = { name: 'Current location', lat: pos.coords.latitude, lng: pos.coords.longitude, kind: 'gps' };
-      ui.locMsg = `Using your location (±${Math.round(pos.coords.accuracy)} m). It stays on this phone.`;
+      ui.locMsg = `Using your location (±${Math.round(pos.coords.accuracy)} m). Only a point rounded to about 100 m is shared, to find the roads.`;
       if (tab === 'plan') renderDriver(root, ctx, 'plan');
     },
     (err) => {
@@ -584,7 +627,7 @@ function timingLine(c, ctx, kWh) {
 
 // Long trip: start, legs, charging stops (how much and how long), arrival. Like a trip planner,
 // but it charges only what the next leg needs, at fast DC chargers.
-function tripHtml(t, place, ctx) {
+function tripHtml(t, place, ctx, rd = null) {
   const head = `<div class="res-head"><h2>Trip to ${esc(place.name)}</h2><span class="mode mode-balanced">${t.ok ? `${t.stops.length} charge stop${t.stops.length === 1 ? '' : 's'}` : 'Not possible'}</span></div>`;
   if (!t.ok) return `${head}<p class="empty">${esc(t.error)}</p>`;
   const tot = t.totals;
@@ -605,8 +648,36 @@ function tripHtml(t, place, ctx) {
   return `${head}
     <p class="trip-total"><b>${formatDuration(tot.totalMin)}</b> total trip · ${Math.round(tot.km)} km · ${formatDuration(tot.chargeMin || 0.01)} charging${tot.cost ? ` · ${rm(tot.cost)} to charge` : ''}</p>
     <ol class="trip">${items.join('')}</ol>
-    <p class="muted">${t.stops.length ? 'CasCas charges only what the next leg needs, and never past 80%, where fast charging slows down, so stops stay short.' : `No stop needed: you arrive with ${Math.round(t.arrivePct)}%.`} Highway chargers are demo data; times assume ${90} km/h.</p>
-    <div class="btn-row"><a class="btn primary" href="${esc(t.directionsUrl)}" target="_blank" rel="noopener">Get directions</a></div>`;
+    ${roadNote(t, rd, ctx)}
+    <p class="muted">${t.stops.length ? 'CasCas charges only what the next leg needs, and never past 80%, where fast charging slows down, so stops stay short.' : `No stop needed: you arrive with ${Math.round(t.arrivePct)}%.`} Highway chargers are demo data.</p>
+    ${stepsHtml(rd)}
+    <div class="btn-row"><a class="btn primary grow" href="${esc(t.directionsUrl)}" target="_blank" rel="noopener">${IC.nav}Start in Google Maps</a>
+      <a class="btn" href="https://waze.com/ul?ll=${(t.stops[0]?.charger || place).lat},${(t.stops[0]?.charger || place).lng}&navigate=yes" target="_blank" rel="noopener">Waze${t.stops.length ? ' to stop 1' : ''}</a></div>`;
+}
+
+// Where the trip numbers come from, and what traffic usually adds at this hour.
+function roadNote(t, rd, ctx) {
+  const tr = typicalTraffic(ctx.clock);
+  const extra = Math.round(t.totals.driveMin * (tr.factor - 1));
+  const src = t.byRoad
+    ? `By road: ${Math.round(t.totals.km)} km, ${formatDuration(t.totals.driveMin)} driving on free-flowing roads (OpenStreetMap routing).`
+    : rd?.status === 'loading' ? 'Checking the real roads…' : 'Road routing is unavailable, so distances are estimated.';
+  const alt = rd?.routes?.[1] ? ` Alternative route: ${formatDuration(rd.routes[1].minutes)}, ${Math.round(rd.routes[1].km)} km.` : '';
+  return `<div class="road-note">
+    <p>${IC.route}<span>${esc(src)}${esc(alt)}</span></p>
+    <p class="traffic t-${tr.level.toLowerCase()}">${IC.clock}<span><b>Typical traffic now: ${tr.level}</b>${extra > 0 ? `, about +${formatDuration(extra)}` : ''}. An estimate for this hour, not live.</span></p>
+    ${t.shortfall ? `<p class="warn-line">On the real roads this plan is tight. Charge a little more at the first stop, or set a higher arrival battery.</p>` : ''}
+  </div>`;
+}
+
+function stepsHtml(rd) {
+  const route = rd?.routes?.[0];
+  if (!route) return '';
+  const steps = route.legs.flatMap((l, i) => [
+    ...(i ? [{ text: `Charging stop ${i}`, km: null, stop: true }] : []),
+    ...l.steps.filter((x) => x.maneuver?.type !== 'arrive' || i === route.legs.length - 1).map((x) => ({ text: stepText(x), km: x.distance / 1000 })),
+  ]);
+  return `<details class="steps"><summary>Turn-by-turn (${steps.length} steps)</summary><ol>${steps.map((x) => `<li class="${x.stop ? 'stop' : ''}"><span>${esc(x.text)}</span>${x.km ? `<span class="muted">${x.km < 1 ? `${Math.round(x.km * 1000)} m` : `${x.km.toFixed(1)} km`}</span>` : ''}</li>`).join('')}</ol></details>`;
 }
 
 // "Condo bays near you": every pilot condo, sideways-scrolling cards like a CPO app's Nearby list.
@@ -925,24 +996,53 @@ function stopTimer() {
 }
 
 let tripLayer = null;
-function drawTrip(origin, t, place) {
+function drawRoadLine(layer, coords, alt = false) {
+  L.polyline(coords, { className: alt ? 'road-casing alt' : 'road-casing', weight: alt ? 8 : 10, interactive: false }).addTo(layer);
+  return L.polyline(coords, { className: alt ? 'road-line alt' : 'road-line', weight: alt ? 5 : 6 }).addTo(layer);
+}
+
+function drawTrip(origin, t, place, rd = null) {
   if (!map) return;
   const had = !!tripLayer;
   if (tripLayer) { tripLayer.remove(); tripLayer = null; }
   if (!t) { if (had) map.setView([3.2135, 101.7265], 14); return; }
   tripLayer = L.layerGroup().addTo(map);
   const pts = [[origin.lat, origin.lng], ...t.stops.map((s) => [s.charger.lat, s.charger.lng]), [place.lat, place.lng]];
-  L.polyline(pts, { className: 'trip-line', weight: 5 }).addTo(tripLayer);
+  const routes = rd?.routes || [];
+  if (routes.length) {
+    routes.slice(1, 2).forEach((r) => drawRoadLine(tripLayer, r.coords, true).bindTooltip(`${formatDuration(r.minutes)} · ${Math.round(r.km)} km`, { className: 'eta-chip alt', sticky: true }));
+    drawRoadLine(tripLayer, routes[0].coords).bindTooltip(`${formatDuration(routes[0].minutes)} · ${Math.round(routes[0].km)} km`, { permanent: true, direction: 'center', className: 'eta-chip' });
+  } else {
+    L.polyline(pts, { className: 'trip-line', weight: 4, dashArray: '6 8' }).addTo(tripLayer);
+  }
   for (const s of t.stops) {
     L.marker([s.charger.lat, s.charger.lng], { icon: L.divIcon({ html: `<span class="pin pick">${IC.bolt}${Math.round(s.arrivePct)}→${s.departPct}%</span>`, className: 'pin-wrap', iconSize: null }), title: s.charger.name })
       .bindPopup(`<div class="pop"><b>${esc(s.charger.name)}</b><br>Charge ${Math.round(s.arrivePct)}% → ${s.departPct}% · ${formatDuration(s.minutes)}</div>`).addTo(tripLayer);
   }
   L.marker([place.lat, place.lng], { icon: L.divIcon({ html: `<span class="pin dest">${esc(place.name)}</span>`, className: 'pin-wrap', iconSize: null }) }).addTo(tripLayer);
-  map.fitBounds(pts, { padding: [30, 30] });
+  if (!tripLayer.fitted) map.fitBounds(routes[0]?.coords?.length ? routes[0].coords : pts, { padding: [30, 30] });
+}
+
+// Charge nearby: the road to the selected charger (or the top pick), with the time by road.
+let pickLayer = null;
+function drawPickRoute(origin, trip, ctx) {
+  if (pickLayer) { pickLayer.remove(); pickLayer = null; }
+  if (!map || trip || !last) return;
+  const target = ctx.world.chargers.find((c) => c.id === ui.selected) || last.ranking.results[0]?.charger;
+  if (!target || distanceKm(origin, target) < 0.2) return;
+  const rd = road([origin, target], { alternatives: tab === 'map' });
+  if (!rd.routes.length) return;
+  pickLayer = L.layerGroup().addTo(map);
+  rd.routes.slice(1, 2).forEach((r) => drawRoadLine(pickLayer, r.coords, true));
+  const tr = typicalTraffic(ctx.clock);
+  const r0 = rd.routes[0];
+  drawRoadLine(pickLayer, r0.coords).bindTooltip(`${formatDuration(r0.minutes * tr.factor)} · ${r0.km} km`, { permanent: true, direction: 'center', className: 'eta-chip' });
 }
 
 function initMap(el, fallback) {
   tripLayer = null;
+  pickLayer = null;
+  trafficLayer = null;
   if (!window.L) { el.hidden = true; fallback.hidden = false; return; }
   map = L.map(el, { scrollWheelZoom: true }).setView([3.2135, 101.7265], 14);
   const tiles = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -967,9 +1067,17 @@ function filterInfo(ch, ctx) {
 }
 const passesFilter = (ch, ctx, f = ui.filters) => matchesFilters(filterInfo(ch, ctx), f);
 
+function setTraffic(on) {
+  trafficOn = on;
+  if (!map) return;
+  if (on && !trafficLayer) trafficLayer = L.tileLayer('api/traffic/{z}/{x}/{y}.png', { maxZoom: 19, opacity: 0.9, attribution: 'Traffic &copy; TomTom' }).addTo(map);
+  if (!on && trafficLayer) { trafficLayer.remove(); trafficLayer = null; }
+}
+
 function filterBarHtml() {
   const n = countFilters(ui.filters);
   return `<button type="button" class="fbtn" data-fopen aria-haspopup="dialog">${IC.filter}Filters${n ? `<span class="badge">${n}</span>` : ''}</button>`
+    + (trafficAvailable ? `<button type="button" data-traffic aria-pressed="${trafficOn}">${IC.route}Live traffic</button>` : '')
     + QUICK.map(([k, l, on]) => `<button type="button" data-quick-filter="${k}" aria-pressed="${on(ui.filters)}">${l}</button>`).join('');
 }
 
@@ -983,6 +1091,7 @@ function bindFilterBar(root, ctx) {
     update(root, ctx);
   }));
   bar.querySelector('[data-fopen]').addEventListener('click', () => openSheet(root, ctx));
+  bar.querySelector('[data-traffic]')?.addEventListener('click', (e) => { setTraffic(!trafficOn); e.currentTarget.setAttribute('aria-pressed', String(trafficOn)); });
 }
 
 // ---- Search (like the operator apps): history, filters, a result count and picture rows ----
@@ -1205,7 +1314,11 @@ function renderDetail(root, ctx, ranking, car) {
   const checkins = (ctx.checkins || ctx.state.checkins)[ch.id] || [];
   const d = describeCharger({ charger: ch, ranking, condo, date: ctx.clock, isResident: !!condo && condo.id === ui.homeId, checkins });
   const cand = ranking.results.find((c) => c.charger.id === ch.id);
-  aside.innerHTML = detailHtml(d, cand ? timingLine(cand, ctx, cand.full ? cand.kWh : cand.deliveredKwh) : '');
+  const start = originPoint();
+  const rd = distanceKm(start, ch) >= 0.2 ? road([start, ch], { alternatives: tab === 'map' }) : null;
+  const tr = typicalTraffic(ctx.clock);
+  const byRoad = rd?.routes?.[0] ? `<p class="road-line-note">${IC.route}<span><b>${formatDuration(rd.routes[0].minutes * tr.factor)}</b> · ${rd.routes[0].km} km by road · typical traffic ${tr.level.toLowerCase()}</span></p>` : '';
+  aside.innerHTML = detailHtml(d, byRoad + (cand ? timingLine(cand, ctx, cand.full ? cand.kWh : cand.deliveredKwh) : ''));
   aside.hidden = false;
   row.classList.add('has-detail');
   if (!wasOpen && map) map.invalidateSize();

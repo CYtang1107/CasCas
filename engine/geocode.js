@@ -1,6 +1,6 @@
 // Place search for Plan: our own places first, then Photon (OpenStreetMap search, made for
-// type-ahead and free for fair use). Only the typed words go out; the GPS position never does,
-// just the rounded start point used to rank nearer results first.
+// type-ahead and free for fair use). Only the typed words go out, with the start point rounded
+// to about 1 km to rank nearer results first.
 import { roadKm } from './trip.js';
 
 export const TRIP_KM = 40;
