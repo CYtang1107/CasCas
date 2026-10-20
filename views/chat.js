@@ -29,10 +29,10 @@ function cardsHtml(cards = []) {
   if (!cards.length) return '';
   if (cards[0].kind === 'trip') {
     const t = cards[0];
-    return `<div class="ccard trip"><b>${esc(t.name)}</b><span class="muted">${esc(t.sub)} · charging ${rm(t.cost)}</span>
+    return `<div class="acard trip"><b>${esc(t.name)}</b><span class="muted">${esc(t.sub)} · charging ${rm(t.cost)}</span>
       <ol>${t.stops.map((s) => `<li><button type="button" class="linkish" data-chat-view="${esc(s.id)}">${esc(s.name)}</button> <span class="muted">${s.from}% → ${s.to}% · ${s.minutes} min · ${rm(s.cost)}</span></li>`).join('')}</ol></div>`;
   }
-  return `<div class="ccards">${cards.map((c, i) => `<button type="button" class="ccard" data-chat-view="${esc(c.id)}">
+  return `<div class="acards">${cards.map((c, i) => `<button type="button" class="acard" data-chat-view="${esc(c.id)}">
       <span class="crank">${i + 1}</span>
       <span class="cmain"><b>${esc(c.name)}</b><span class="muted">${esc(c.sub)}${c.home ? ' · your condo' : c.shared ? ' · shared condo bay' : ''}</span></span>
       <span class="cnums"><b>${rm(c.cost)}</b><span class="muted">${Math.round(c.kwh)} kWh · ${c.km.toFixed(1)} km</span></span></button>`).join('')}</div>`;

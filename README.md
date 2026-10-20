@@ -1,6 +1,6 @@
 # CasSama
 
-*Formerly CasCas. The GitHub repo and the demo links keep the old name so existing links still work.*
+*Formerly CasCas. Old links to the CasCas repo redirect here.*
 
 Shared EV charging for Sime Darby Property townships. Prototype for the SDP University Hackathon 2026 (Planet track).
 

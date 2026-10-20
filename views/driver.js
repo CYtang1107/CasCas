@@ -835,9 +835,11 @@ function condosHtml(ctx) {
     const occ = occupancyAt(ch, ctx.clock, condo).total;
     const open = isOpenToVisitors(condo, ctx.clock);
     const s = condo.sharing;
+    const h12 = (h) => `${h % 12 || 12} ${h < 12 || h === 24 ? 'AM' : 'PM'}`;
+    const until = s.mode === 'auto' ? 'Auto-share' : `until ${h12(s.end)}`;
     const status = mine ? `<span class="chip">${IC.home}Your condo</span>`
-      : open ? `<span class="chip on">Shared now until ${s.end}:00</span>`
-        : `<span class="chip">${IC.clock}${s.enabled ? `Visitors ${s.start}:00–${s.end}:00 ${s.days === 'all' ? 'daily' : s.days}` : 'Residents only'}</span>`;
+      : open ? `<span class="chip on">Shared now · ${until}</span>`
+        : `<span class="chip">${IC.clock}${s.enabled ? `Visitors ${h12(s.start)}–${h12(s.end)}, ${s.days === 'all' ? 'daily' : s.days}` : 'Residents only'}</span>`;
     const km = distanceKm(origin, ch);
     return { km, html: `<button class="ccard" type="button" data-detail="${esc(ch.id)}">
       ${siteArt(ch, condo.name)}
