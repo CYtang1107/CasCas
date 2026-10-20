@@ -11,6 +11,7 @@ import { distanceKm } from '../engine/geo.js';
 import { emptyFilters, countFilters, matchesFilters, FAST_KW } from '../engine/filters.js';
 import { priceNote } from '../engine/pricing.js';
 import { siteArt, brandMark } from './art.js';
+import { searchSites, categoryOf, remember } from '../engine/search.js';
 import { bestWindow } from '../engine/schedule.js';
 import { parseRequest } from '../engine/assistant.js';
 import { planTrip } from '../engine/trip.js';
@@ -32,6 +33,7 @@ const QUICK = [
 ];
 const PRICE_CAPS = [[null, 'Any price'], [0.9, '≤ RM0.90'], [1, '≤ RM1.00'], [1.2, '≤ RM1.20']];
 let draft = null; // the Filters sheet's working copy while it is open
+let search = { open: false, q: '', saved: false };
 const ALL_PLACES = [...PLACES, ...TRIP_PLACES];
 const svg = (d, cls = 'ic') => `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true"><path d="${d}"/></svg>`;
 const IC = {
@@ -46,6 +48,8 @@ const IC = {
   filter: svg('M4 6h16M7 12h10M10 18h4'),
   close: svg('M6 6l12 12M18 6 6 18'),
   check: svg('M5 12.5 10 17l9-10'),
+  back: svg('M15 5 8 12l7 7'),
+  bookmark: svg('M7 4h10v16l-5-4-5 4z'),
 };
 const availChip = (ch, occ) => { const a = availability(ch, occ); return `<span class="chip avail ${a.free ? 'on' : 'warn'}">${ch.type} ${a.free}/${a.total} free</span>`; };
 const navUrl = (ch) => `https://www.google.com/maps/dir/?api=1&destination=${ch.lat},${ch.lng}`;
@@ -69,6 +73,7 @@ export function resetDriver() {
 // They share one state (ui), so a search on Home shows up in Plan, and a booking runs in Activity.
 export function renderDriver(root, ctx, which = 'home') {
   tab = which;
+  if (which !== 'map') search.open = false;
   current = { root, ctx };
   if (map) { map.remove(); map = null; }
   const { condos } = ctx.world;
@@ -105,7 +110,9 @@ export function renderDriver(root, ctx, which = 'home') {
     </div>`;
   } else if (which === 'map') {
     root.innerHTML = `<div class="driver tab-map">
+      <button type="button" class="msearch" data-sopen>${IC.search}<span>Search chargers or places</span></button>
       <div class="map-filters" role="group" aria-label="Filter chargers">${filterBarHtml()}</div>
+      <section class="search-screen" id="d-search" aria-label="Search chargers" hidden></section>
       <div class="sheet-backdrop" id="d-fsheet" hidden></div>
       ${mapRow('full')}
       <p class="map-hint">${esc(trip)} · <a href="#plan">Change</a></p></div>`;
@@ -152,6 +159,8 @@ export function renderDriver(root, ctx, which = 'home') {
 
   const $ = (sel) => root.querySelector(sel);
   bindFilterBar(root, ctx);
+  root.querySelector('[data-sopen]')?.addEventListener('click', () => openSearch(root, ctx));
+  if (which === 'map' && search.open) openSearch(root, ctx);
   $('#d-ask')?.addEventListener('submit', (e) => { e.preventDefault(); ask(root, ctx, $('#d-ask-text').value); });
   root.querySelectorAll('[data-quick]').forEach((a) => a.addEventListener('click', () => {
     if (a.dataset.quick === 'fast') ui.prefs.fastOnly = true;
@@ -744,6 +753,97 @@ function bindFilterBar(root, ctx) {
   bar.querySelector('[data-fopen]').addEventListener('click', () => openSheet(root, ctx));
 }
 
+// ---- Search (like the operator apps): history, filters, a result count and picture rows ----
+function searchRows(ctx) {
+  const origin = ui.homeId ? ctx.world.condos.find((c) => c.id === ui.homeId) : START;
+  const sites = ctx.world.chargers
+    .filter((ch) => passesFilter(ch, ctx) && (!search.saved || ctx.state.favourites.includes(ch.id)))
+    .map((ch) => ({ id: ch.id, name: ch.name, operator: ch.operator, type: `${ch.type} ${ch.kw}kW`, category: categoryOf(ch), address: ch.address || '', km: distanceKm(origin, ch), ch }));
+  return searchSites(sites, search.q);
+}
+
+function resultHtml(r, ctx) {
+  const ch = r.ch;
+  const condo = ctx.world.condos.find((c) => c.id === ch.condoId) || null;
+  const info = filterInfo(ch, ctx);
+  const saved = ctx.state.favourites.includes(ch.id);
+  const status = info.free ? `<span class="ok">Available ${IC.bolt} ${info.free} free</span>` : `<span class="off">Full right now</span>`;
+  const extra = condo ? (condo.id === ui.homeId ? 'Your condo' : isOpenToVisitors(condo, ctx.clock) ? `Shared until ${condo.sharing.end}:00` : 'Residents only right now') : `${ch.type} ${ch.kw} kW · ${rm(info.price)}/kWh`;
+  return `<li class="sres"><button type="button" class="sres-main" data-pick="${esc(ch.id)}">${siteArt(ch, ch.name)}
+      <span class="sres-txt"><span class="srow">${brandMark(ch.operator)}<span class="tag">${esc(r.category)}</span></span>
+      <b>${esc(ch.name)}</b><span class="srow">${status}<span class="muted">${IC.pin}${r.km < 1 ? `${Math.round(r.km * 1000)} m` : `${r.km.toFixed(1)} km`}</span></span>
+      <span class="muted">${esc(extra)}</span></span></button>
+    <button type="button" class="bm" data-fav="${esc(ch.id)}" aria-pressed="${saved}" aria-label="${saved ? 'Remove from' : 'Save to'} saved chargers">${IC.bookmark}</button></li>`;
+}
+
+function openSearch(root, ctx) {
+  const box = root.querySelector('#d-search');
+  if (!box) return;
+  search.open = true;
+  const close = () => { search.open = false; box.hidden = true; box.innerHTML = ''; root.querySelector('[data-sopen]')?.focus(); };
+  const results = () => {
+    const rows = searchRows(ctx);
+    const list = box.querySelector('#d-sres');
+    box.querySelector('#d-scount').textContent = `${rows.length} result${rows.length === 1 ? '' : 's'} found`;
+    list.innerHTML = rows.length ? rows.map((r) => resultHtml(r, ctx)).join('')
+      : `<li class="empty">Nothing matches${search.q ? ` "${esc(search.q)}"` : ''}. Try a mall, a condo, an operator, AC or DC.</li>`;
+    list.querySelectorAll('[data-pick]').forEach((b) => b.addEventListener('click', () => {
+      ctx.state.searchHistory = remember(ctx.state.searchHistory, search.q);
+      ctx.save();
+      close();
+      select(root, ctx, b.dataset.pick, false);
+      focusSelected();
+    }));
+    list.querySelectorAll('[data-fav]').forEach((b) => b.addEventListener('click', () => {
+      const id = b.dataset.fav;
+      const favs = ctx.state.favourites;
+      ctx.state.favourites = favs.includes(id) ? favs.filter((x) => x !== id) : [...favs, id];
+      ctx.save();
+      results();
+      box.querySelector(`[data-fav="${CSS.escape(id)}"]`)?.focus();
+    }));
+  };
+  const history = () => {
+    const h = box.querySelector('#d-shist');
+    const items = ctx.state.searchHistory;
+    h.innerHTML = search.q ? '' : `<p class="muted">${items.length ? 'Recent searches' : 'Search a mall, condo, operator, AC or DC'}</p>
+      <div class="fchips plain">${items.map((q) => `<button type="button" data-hist="${esc(q)}">${IC.clock}${esc(q)}</button>`).join('')}
+      <button type="button" data-saved aria-pressed="${search.saved}">${IC.bookmark}Saved (${ctx.state.favourites.length})</button></div>`;
+    h.querySelectorAll('[data-hist]').forEach((b) => b.addEventListener('click', () => { search.q = b.dataset.hist; input.value = search.q; history(); results(); }));
+    h.querySelector('[data-saved]')?.addEventListener('click', () => { search.saved = !search.saved; history(); results(); });
+  };
+  box.innerHTML = `<header class="shead"><button type="button" class="round" data-sclose aria-label="Back to the map">${IC.back}</button>
+      <label class="search"><span class="sr-only">Search chargers</span>${IC.search}<input id="d-sq" type="search" autocomplete="off" enterkeyhint="search" placeholder="Search location, mall, condo, operator" value="${esc(search.q)}"></label></header>
+    <div id="d-shist"></div>
+    <div class="map-filters">${filterBarHtml()}</div>
+    <p class="scount" id="d-scount" aria-live="polite"></p>
+    <ul class="slist" id="d-sres"></ul>`;
+  box.hidden = false;
+  const input = box.querySelector('#d-sq');
+  input.addEventListener('input', () => { search.q = input.value; history(); results(); });
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { ctx.state.searchHistory = remember(ctx.state.searchHistory, search.q); ctx.save(); input.blur(); }
+    if (e.key === 'Escape') close();
+  });
+  box.querySelector('[data-sclose]').addEventListener('click', close);
+  // The filter chips here change the same filters as on the map.
+  const bar = box.querySelector('.map-filters');
+  const rebindBar = () => {
+    bar.querySelectorAll('[data-quick-filter]').forEach((b) => b.addEventListener('click', () => {
+      QUICK.find(([k]) => k === b.dataset.quickFilter)[3](ui.filters);
+      bar.innerHTML = filterBarHtml();
+      rebindBar();
+      results();
+      update(root, ctx);
+    }));
+    bar.querySelector('[data-fopen]').addEventListener('click', () => openSheet(root, ctx));
+  };
+  rebindBar();
+  history();
+  results();
+  input.focus();
+}
+
 // The Filters sheet: chips by group, a live count, Reset and Apply.
 function sheetHtml(ctx) {
   const f = draft;
@@ -778,6 +878,7 @@ function openSheet(root, ctx) {
     bar.innerHTML = filterBarHtml();
     bindFilterBar(root, ctx);
     if (apply) update(root, ctx);
+    if (search.open) { openSearch(root, ctx); return; }
     root.querySelector('[data-fopen]')?.focus();
   };
   const onKey = (e) => { if (e.key === 'Escape') close(false); };
@@ -849,7 +950,10 @@ function select(root, ctx, id, fromList) {
 
 function focusSelected() {
   const m = markers.get(ui.selected);
-  if (m && map) { map.setView(m.getLatLng(), Math.max(map.getZoom(), 15)); m.openPopup(); }
+  if (m && map) {
+    map.setView(m.getLatLng(), Math.max(map.getZoom(), 15));
+    if (!matchMedia('(max-width: 760px)').matches) m.openPopup(); // phones use the bottom sheet
+  }
 }
 
 function renderDetail(root, ctx, ranking, car) {

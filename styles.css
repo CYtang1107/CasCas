@@ -497,4 +497,29 @@ select, input[type="number"], input[type="text"], input[type="datetime-local"] {
 .fchips .brand-mark { width: 20px; height: 20px; font-size: 0.65rem; }
 .fsheet footer { position: sticky; bottom: calc(-16px - env(safe-area-inset-bottom, 0px)); display: flex; gap: 10px; background: var(--bg); padding: 10px 0 4px; }
 @media (min-width: 761px) { .sheet-backdrop { align-items: center; } .fsheet { border-radius: 26px; } }
+/* Search (Map tab) */
+.msearch { display: flex; align-items: center; gap: 10px; width: 100%; margin-bottom: 10px; padding: 13px 16px; border: 0; border-radius: 16px; background: var(--surface); color: var(--muted); font: 500 0.98rem/1.2 var(--body); box-shadow: var(--shadow); cursor: text; text-align: left; }
+.msearch .ic { width: 20px; height: 20px; }
+.search-screen { position: fixed; inset: 0; z-index: 1500; background: var(--bg); overflow-y: auto; padding: calc(12px + env(safe-area-inset-top, 0px)) 16px calc(24px + env(safe-area-inset-bottom, 0px)); display: grid; gap: 12px; align-content: start; }
+.search-screen > * { width: 100%; max-width: 760px; margin: 0 auto; }
+.shead { display: flex; gap: 10px; align-items: center; }
+.shead .search { flex: 1; border: 0; box-shadow: var(--shadow-sm); }
+.shead .round .ic { width: 22px; height: 22px; }
+.fchips.plain { background: none; padding: 0; }
+.search-screen .map-filters { min-height: 50px; }
+.scount { color: var(--muted); font-weight: 600; }
+.slist { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
+.sres { display: flex; gap: 8px; align-items: flex-start; background: var(--surface); border-radius: 18px; padding: 10px; box-shadow: var(--shadow-sm); }
+.sres-main { flex: 1; min-width: 0; display: grid; grid-template-columns: 112px minmax(0, 1fr); gap: 12px; align-items: start; text-align: left; font: inherit; color: var(--fg); background: none; border: 0; padding: 0; cursor: pointer; }
+.sres-main .art { aspect-ratio: 4 / 3; border-radius: 12px; }
+.sres-txt { display: grid; gap: 4px; min-width: 0; }
+.sres-txt b { font-size: 1rem; line-height: 1.25; }
+.srow { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; font-size: 0.88rem; }
+.srow .ok { color: #1E9E5A; font-weight: 700; display: inline-flex; align-items: center; gap: 3px; }
+.srow .off { color: var(--muted); font-weight: 700; }
+.srow .muted { display: inline-flex; align-items: center; gap: 3px; }
+.tag { font-size: 0.75rem; font-weight: 600; border: 1px solid var(--fg); border-radius: 8px; padding: 2px 8px; }
+.bm { flex: none; width: 44px; height: 44px; display: grid; place-items: center; border: 0; border-radius: 12px; background: none; color: var(--fg); cursor: pointer; }
+.bm .ic { width: 22px; height: 22px; }
+.bm[aria-pressed="true"] .ic { fill: var(--accent); stroke: var(--accent); }
 [hidden] { display: none !important; } /* the hidden attribute must win over display rules like .detail { display: grid } */

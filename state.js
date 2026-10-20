@@ -1,7 +1,7 @@
 // Per-device demo state. Every storage call is guarded so private windows and blocked storage still work.
 const KEY = 'cascas.v1';
 export const MAX_SESSIONS = 500;
-const blank = () => ({ checkins: {}, booking: null, sharing: {}, sessions: [], visitorPasses: [], anonNo: null, maintenance: {} });
+const blank = () => ({ checkins: {}, booking: null, sharing: {}, sessions: [], visitorPasses: [], anonNo: null, maintenance: {}, searchHistory: [], favourites: [] });
 let memory = blank();
 
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -20,6 +20,9 @@ function clean(parsed) {
   if (Array.isArray(parsed.sessions)) s.sessions = parsed.sessions.filter(isObject).slice(-MAX_SESSIONS);
   if (Array.isArray(parsed.visitorPasses)) s.visitorPasses = parsed.visitorPasses.filter(isObject);
   if (Number.isInteger(parsed.anonNo)) s.anonNo = parsed.anonNo;
+  for (const k of ['searchHistory', 'favourites']) {
+    if (Array.isArray(parsed[k])) s[k] = parsed[k].filter((x) => typeof x === 'string').slice(0, 50);
+  }
   if (isObject(parsed.maintenance)) {
     for (const [id, list] of Object.entries(parsed.maintenance)) if (Array.isArray(list)) s.maintenance[id] = list.filter(isObject);
   }
