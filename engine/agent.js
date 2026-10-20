@@ -17,7 +17,9 @@ import { idleWindow } from './cpo.js';
 
 const ALL_PLACES = [...PLACES.filter((p) => p.id !== 'here'), ...TRIP_PLACES];
 // Open Charge Map often has names IN CAPITALS; show them in title case.
-export const tidyName = (s) => (/[a-z]/.test(String(s)) ? String(s) : String(s).toLowerCase().replace(/\b([a-z])/g, (m) => m.toUpperCase()).replace(/\b(Dc|Ac|Kl|Lrt|Mrt|Ev|Tnb|Sdp)\b/g, (m) => m.toUpperCase()));
+// Word by word, so "SMILE HOTEL WANGSA MAJU (Hotel)" is fixed too; short codes like DC and KL stay.
+const KEEP = new Set(['DC', 'AC', 'KL', 'LRT', 'MRT', 'EV', 'TNB', 'SDP', 'CCS2', 'R&R']);
+export const tidyName = (s) => String(s).replace(/[A-Z][A-Z&0-9]{2,}/g, (w) => (KEEP.has(w) ? w : w[0] + w.slice(1).toLowerCase()));
 const fn = (name, description, properties, required = []) => ({ type: 'function', function: { name, description, parameters: { type: 'object', properties, required } } });
 
 export const TOOLS = [
@@ -199,6 +201,7 @@ export function systemPrompt({ clock, carName, originName, homeName }) {
     '- Start with the answer itself, e.g. "Charge at X: RM5.50 for 6 kWh, 2 km away." Then one line on why, and one useful tip if there is one.',
     '- The app shows the top chargers as cards and the Book / Open in Plan buttons under your reply, so do not describe buttons, cards, tools or agents, and do not say "I have put" or "I called".',
     '- Name at most two options. You may use **bold** for the charger name and "- " bullets; no headings, tables or links.',
+    '- When comparing options, call one cheaper, closer or faster only if its numbers show it (compare cost_rm, distance_km and minutes).',
     '- For a shared condo bay, mention residents come first and the sharing hours if relevant.',
     'Rules you must follow:',
     '- Every price, cost, time, distance and battery figure must come from a tool result in this conversation. Never estimate numbers yourself.',

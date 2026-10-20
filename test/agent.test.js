@@ -152,4 +152,6 @@ test('charger names in capitals are tidied for the reply', async () => {
   const { tidyName } = await import('../engine/agent.js');
   assert.equal(tidyName('SMILE HOTEL WANGSA MAJU'), 'Smile Hotel Wangsa Maju');
   assert.equal(tidyName('KL East Mall DC'), 'KL East Mall DC');
+  assert.equal(tidyName('SMILE HOTEL WANGSA MAJU (Hotel)'), 'Smile Hotel Wangsa Maju (Hotel)');
+  assert.equal(tidyName('Seremban R&R DC (demo)'), 'Seremban R&R DC (demo)');
 });
