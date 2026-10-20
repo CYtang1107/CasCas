@@ -365,7 +365,7 @@ a.pick.hero { text-decoration: none; color: var(--fg); }
 .side button { text-align: left; font: 600 0.9rem/1.2 var(--body); color: var(--muted); background: none; border: 0; border-radius: 8px; padding: 10px 12px; cursor: pointer; min-height: 40px; }
 .side button:hover { background: var(--surface); color: var(--fg); }
 .portal [id^="j-s-"] { scroll-margin-top: 92px; }
-.switch { white-space: nowrap; }
+.app-switch { white-space: nowrap; }
 @media (max-width: 1000px) {
   .portal { grid-template-columns: minmax(0, 1fr); }
   .side { position: static; display: flex; gap: 6px; overflow-x: auto; padding-bottom: 4px; }
@@ -400,7 +400,7 @@ select, input[type="number"], input[type="text"], input[type="datetime-local"] {
 .top .roles { background: rgba(255, 255, 255, 0.14); border-color: transparent; }
 .top .roles a { color: #FFFFFF; }
 .top .roles a[aria-current="page"] { background: #FFFFFF; color: var(--accent); }
-.top .switch { background: #FFFFFF; color: var(--accent); border: 0; }
+.top .app-switch { background: #FFFFFF; color: var(--accent); border: 0; }
 .portal-tag { background: rgba(255, 255, 255, 0.2); color: #FFFFFF; }
 
 /* Home: the band continues behind the greeting and search, the body slides over it */
