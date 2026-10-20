@@ -68,7 +68,13 @@ One free Render web service serves both the website and the API (`render.yaml`).
 2. Optional: set `OCM_KEY` (Open Charge Map key) in the service's Environment tab. The key stays on the server.
 3. Open the service URL. The first visit after 15 minutes idle can take up to a minute while it wakes.
 
-Live traffic: get a free key at developer.tomtom.com (My Dashboard → Keys), then add `TOMTOM_KEY` in Render → Environment. A "Live traffic" chip appears on the Map tab.
+Live TomTom data: get a free key at developer.tomtom.com (My Dashboard → Keys), then add `TOMTOM_KEY` in Render → Environment. With it, the server (which keeps the key) adds:
+- **Live bays** for stations that report them (about 25 of 77 around KL East), shown as "Live: 2 of 2 free" and used for ranking when the demo time is "Right now". Stations we did not have are added to the map.
+- **Routes with live traffic**: times for leaving now, the delay, slow sections in amber or red on the route, and turn-by-turn steps.
+- **Incidents**: roadworks, jams, accidents and closures on your route, and an Incidents switch on the Map tab.
+- **Live traffic** colours on the map.
+
+Answers are cached (stations 6 h, bays 5 min, routes 3 min, incidents 5 min) to stay inside the free daily allowance.
 
 OCPP: real chargers would use `OCPP_PASSWORD` (set it in Render). Without it, only the built-in simulator can connect. `OCPP_SIM=0` turns the simulated chargers off.
 

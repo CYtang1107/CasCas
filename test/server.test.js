@@ -195,3 +195,33 @@ test('traffic tiles: off without a key; with one, proxied and the key never reac
   assert.equal((await fetch(`${base}/api/traffic/99/1/1.png`)).status, 400);
   await new Promise((r) => server.close(r));
 });
+
+test('TomTom data through the server: validated, cached, key kept on the server', async () => {
+  const off = await start();
+  assert.equal((await off.call('GET', '/api/tt/stations')).status, 404);
+  await off.close();
+  const calls = [];
+  const reply = (url) => {
+    if (url.includes('nearbySearch')) return { results: [{ id: 's1', poi: { name: 'ChargeN Go', brands: [{ name: 'ChargeN Go' }] }, position: { lat: 3.2, lon: 101.72 }, chargingPark: { connectors: [{ connectorType: 'IEC62196Type2Outlet', ratedPowerKW: 7, currentType: 'AC1' }] }, dataSources: { chargingAvailability: { id: 'av1' } } }] };
+    if (url.includes('chargingAvailability')) return { connectors: [{ total: 1, availability: { current: { available: 1 } } }] };
+    if (url.includes('calculateRoute')) return { routes: [] };
+    return { incidents: [] };
+  };
+  const app = createApp({ dataDir: tmp(), secret: 's', pins: {}, trafficKey: 'tt-secret',
+    fetchFn: async (url) => { calls.push(String(url)); return { ok: true, status: 200, json: async () => reply(String(url)) }; } });
+  const server = await new Promise((r) => { const s = app.listen(0, () => r(s)); });
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const st = await (await fetch(`${base}/api/tt/stations`)).json();
+  assert.equal(st.stations[0].live.available, 1);
+  assert.ok(!JSON.stringify(st).includes('tt-secret'));
+  await fetch(`${base}/api/tt/stations`);
+  assert.equal(calls.filter((c) => c.includes('nearbySearch')).length, 1, 'stations cached');
+  assert.equal((await fetch(`${base}/api/tt/route?pts=3.2,101.7`)).status, 400);
+  assert.equal((await fetch(`${base}/api/tt/route?pts=40.7,-74;3.2,101.7`)).status, 400, 'outside Malaysia');
+  assert.equal((await fetch(`${base}/api/tt/route?pts=3.21651,101.72502;2.1896,102.2501&alt=1`)).status, 200);
+  assert.match(calls.at(-1), /calculateRoute\/3\.217,101\.725:2\.19,102\.25\/json\?traffic=true.*maxAlternatives=1/);
+  assert.equal((await fetch(`${base}/api/tt/incidents?bbox=101.6,3.1,101.8,3.3`)).status, 200);
+  assert.match(calls.at(-1), /incidentDetails\?bbox=101\.60,3\.10,101\.80,3\.30/);
+  assert.equal((await fetch(`${base}/api/tt/incidents?bbox=nope`)).status, 400);
+  await new Promise((r) => server.close(r));
+});

@@ -16,6 +16,7 @@ import { searchSites, categoryOf, remember } from '../engine/search.js';
 import { searchPlaces, localMatches, isTrip } from '../engine/geocode.js';
 import { CONDOS } from '../data/condos.js';
 import { osrmUrl, parseOsrm, stepText, typicalTraffic, refineTrip } from '../engine/roads.js';
+import { parseTtRoute, parseIncidents, incidentsNear } from '../engine/tomtom.js';
 import { bestWindow } from '../engine/schedule.js';
 import { parseRequest } from '../engine/assistant.js';
 import { planTrip } from '../engine/trip.js';
@@ -52,6 +53,7 @@ const IC = {
   filter: svg('M4 6h16M7 12h10M10 18h4'),
   close: svg('M6 6l12 12M18 6 6 18'),
   check: svg('M5 12.5 10 17l9-10'),
+  alert: svg('M12 3 2 21h20zM12 10v5M12 18h.01'),
   locate: svg('M12 19a7 7 0 1 0 0-14 7 7 0 0 0 0 14zM12 2v3M12 19v3M2 12h3M19 12h3M12 14.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5z'),
   back: svg('M15 5 8 12l7 7'),
   car: svg('M5 16h14M6 16l1.5-5h9L18 16v3H6zM8 19v1M16 19v1M8.5 13.5h.01M15.5 13.5h.01'),
@@ -63,7 +65,7 @@ const IC = {
   building: svg('M4 21V7l8-4 8 4v14M9 21v-5h6v5M8 10h2M14 10h2M8 13h2M14 13h2'),
   bookmark: svg('M7 4h10v16l-5-4-5 4z'),
 };
-const availChip = (ch, occ) => { const a = availability(ch, occ); return `<span class="chip avail ${a.free ? 'on' : 'warn'}">${ch.type} ${a.free}/${a.total} free</span>`; };
+const availChip = (ch, occ) => { const a = availability(ch, occ); return `<span class="chip avail ${a.free ? 'on' : 'warn'}">${a.live ? '<span class="live-dot" title="Live from TomTom"></span>' : ''}${ch.type} ${a.free}/${a.total} free</span>`; };
 const navUrl = (ch) => `https://www.google.com/maps/dir/?api=1&destination=${ch.lat},${ch.lng}`;
 // ---- Real roads (OSRM) ----
 // Routes are fetched once per set of points and kept; while one loads, the plan shows the estimate.
@@ -72,16 +74,23 @@ const roadKey = (pts, alt) => `${alt ? 'a' : 'r'}:${pts.map((p) => `${p.lat.toFi
 function road(points, { alternatives = false } = {}) {
   // Only a rounded point (about 100 m) goes to the route service, never the exact GPS fix.
   const pts = points.map((p) => ({ lat: Math.round(p.lat * 1000) / 1000, lng: Math.round(p.lng * 1000) / 1000 }));
-  const key = roadKey(pts, alternatives);
+  const viaTT = trafficAvailable === true;
+  const key = `${viaTT ? 'tt' : 'osrm'}:${roadKey(pts, alternatives)}`;
   const hit = roads.get(key);
   if (hit) return hit;
   const entry = { status: 'loading', routes: [] };
   roads.set(key, entry);
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 8000);
-  fetch(osrmUrl(pts, { alternatives, steps: true }), { signal: ctrl.signal })
+  const url = viaTT ? `api/tt/route?pts=${pts.map((p) => `${p.lat},${p.lng}`).join(';')}&alt=${alternatives ? 1 : 0}` : osrmUrl(pts, { alternatives, steps: true });
+  fetch(url, { signal: ctrl.signal })
     .then((r) => (r.ok ? r.json() : null))
-    .then((j) => { entry.routes = parseOsrm(j); entry.status = entry.routes.length ? 'ok' : 'failed'; })
+    .then((j) => {
+      entry.routes = viaTT ? parseTtRoute(j)
+        : parseOsrm(j).map((r) => ({ ...r, legs: r.legs.map((l) => ({ ...l, steps: l.steps.map((x) => ({ text: stepText(x), km: x.distance / 1000 })) })) }));
+      entry.status = entry.routes.length ? 'ok' : 'failed';
+      if (viaTT && entry.routes[0]) loadIncidentsFor(entry);
+    })
     .catch(() => { entry.status = 'failed'; })
     .finally(() => {
       clearTimeout(timer);
@@ -89,6 +98,28 @@ function road(points, { alternatives = false } = {}) {
     });
   return entry;
 }
+// Traffic incidents along a route, from the server (TomTom), fetched once per route.
+const incidentCache = new Map();
+async function fetchIncidents(bbox) {
+  const key = bbox.map((v) => v.toFixed(2)).join(',');
+  if (!incidentCache.has(key)) {
+    incidentCache.set(key, fetch(`api/tt/incidents?bbox=${key}`).then((r) => (r.ok ? r.json() : null)).then(parseIncidents).catch(() => []));
+  }
+  return incidentCache.get(key);
+}
+function loadIncidentsFor(entry) {
+  const c = entry.routes[0].coords;
+  const lats = c.map((x) => x[0]);
+  const lngs = c.map((x) => x[1]);
+  const bbox = [Math.min(...lngs) - 0.01, Math.min(...lats) - 0.01, Math.max(...lngs) + 0.01, Math.max(...lats) + 0.01];
+  fetchIncidents(bbox).then((list) => {
+    entry.incidents = incidentsNear(list, c, 250);
+    if (current && (tab === 'plan' || tab === 'map')) update(current.root, current.ctx);
+  });
+}
+let incidentsOn = false;
+let incidentLayer = null;
+
 let trafficOn = false;
 let trafficLayer = null;
 let trafficAvailable = null; // null = not asked yet
@@ -96,6 +127,7 @@ async function checkTraffic(ctx) {
   if (trafficAvailable !== null || !ctx.api) { if (!ctx.api) trafficAvailable = false; return; }
   try { trafficAvailable = !!(await (await fetch('api/config')).json()).traffic; } catch { trafficAvailable = false; }
   if (current && tab === 'map') { const bar = current.root.querySelector('.map-filters'); if (bar) { bar.innerHTML = filterBarHtml(); bindFilterBar(current.root, current.ctx); } }
+  if (trafficAvailable && current) update(current.root, current.ctx); // re-plan with live traffic
 }
 
 // Start point: your GPS position or a place you typed, else your condo, else KL East.
@@ -257,7 +289,9 @@ export function renderDriver(root, ctx, which = 'home') {
 
   if ($('#d-map')) initMap($('#d-map'), $('#d-map-fallback'));
   if (map && trafficOn) setTraffic(true);
-  if (which === 'map') checkTraffic(ctx);
+  if (map && incidentsOn) refreshIncidentLayer();
+  map?.on('moveend', () => { clearTimeout(incTimer); incTimer = setTimeout(refreshIncidentLayer, 600); });
+  checkTraffic(ctx);
   update(root, ctx);
   if (which === 'map' && ui.selected) focusSelected();
   if (ui.stage === 'charging' && !timer) startTimer();
@@ -659,23 +693,42 @@ function tripHtml(t, place, ctx, rd = null) {
 function roadNote(t, rd, ctx) {
   const tr = typicalTraffic(ctx.clock);
   const extra = Math.round(t.totals.driveMin * (tr.factor - 1));
+  const r0 = rd?.routes?.[0];
+  const live = r0?.live;
   const src = t.byRoad
-    ? `By road: ${Math.round(t.totals.km)} km, ${formatDuration(t.totals.driveMin)} driving on free-flowing roads (OpenStreetMap routing).`
+    ? `By road: ${Math.round(t.totals.km)} km, ${formatDuration(t.totals.driveMin)} driving${live ? ' with traffic right now (TomTom)' : ' on free-flowing roads (OpenStreetMap routing)'}.`
     : rd?.status === 'loading' ? 'Checking the real roads…' : 'Road routing is unavailable, so distances are estimated.';
   const alt = rd?.routes?.[1] ? ` Alternative route: ${formatDuration(rd.routes[1].minutes)}, ${Math.round(rd.routes[1].km)} km.` : '';
   return `<div class="road-note">
     <p>${IC.route}<span>${esc(src)}${esc(alt)}</span></p>
-    <p class="traffic t-${tr.level.toLowerCase()}">${IC.clock}<span><b>Typical traffic now: ${tr.level}</b>${extra > 0 ? `, about +${formatDuration(extra)}` : ''}. An estimate for this hour, not live.</span></p>
+    ${live ? `<p class="traffic t-${r0.delayMin >= 15 ? 'heavy' : r0.delayMin >= 5 ? 'moderate' : 'light'}">${IC.clock}<span><b>Live traffic: ${r0.delayMin ? `+${formatDuration(r0.delayMin)} delay` : 'no delays right now'}</b>${r0.traffic.length ? ` · ${r0.traffic.length} slow section${r0.traffic.length === 1 ? '' : 's'} on the map` : ''}. Times are for leaving now.</span></p>`
+      : `<p class="traffic t-${tr.level.toLowerCase()}">${IC.clock}<span><b>Typical traffic now: ${tr.level}</b>${extra > 0 ? `, about +${formatDuration(extra)}` : ''}. An estimate for this hour, not live.</span></p>`}
+    ${incidentsHtml(rd)}
     ${t.shortfall ? `<p class="warn-line">On the real roads this plan is tight. Charge a little more at the first stop, or set a higher arrival battery.</p>` : ''}
   </div>`;
 }
+
+function incidentsHtml(rd) {
+  const list = rd?.incidents;
+  if (!list?.length) return rd?.routes?.[0]?.live && rd.incidents ? `<p class="ok-line">${IC.check}<span>No incidents reported on your route.</span></p>` : '';
+  return `<div class="incidents"><p><b>${list.length} incident${list.length === 1 ? '' : 's'} on your route</b> (TomTom, live)</p><ul>${list.slice(0, 4).map((i) => `<li>${incIcon(i.kind)}<span><b>${esc(i.label)}</b>${i.where ? ` · ${esc(i.where)}` : ''}${i.delayMin ? ` · +${i.delayMin} min` : ''}</span></li>`).join('')}</ul></div>`;
+}
+
+const INC_PATH = {
+  roadworks: 'M4 20h16M6 20l4-12h4l4 12M8 14h8',
+  jam: 'M5 16h14M6 16l1.5-5h9L18 16v3H6z',
+  accident: 'M12 3 2 21h20zM12 10v5M12 18h.01',
+  closed: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM7 12h10',
+  other: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 8v5M12 16h.01',
+};
+const incIcon = (kind) => `<span class="inc inc-${kind in INC_PATH ? kind : 'other'}">${svg(INC_PATH[kind] || INC_PATH.other)}</span>`;
 
 function stepsHtml(rd) {
   const route = rd?.routes?.[0];
   if (!route) return '';
   const steps = route.legs.flatMap((l, i) => [
     ...(i ? [{ text: `Charging stop ${i}`, km: null, stop: true }] : []),
-    ...l.steps.filter((x) => x.maneuver?.type !== 'arrive' || i === route.legs.length - 1).map((x) => ({ text: stepText(x), km: x.distance / 1000 })),
+    ...l.steps.filter((x, k) => !/^(arrive|you have arrived)/i.test(x.text) || (i === route.legs.length - 1 && k === l.steps.length - 1)),
   ]);
   return `<details class="steps"><summary>Turn-by-turn (${steps.length} steps)</summary><ol>${steps.map((x) => `<li class="${x.stop ? 'stop' : ''}"><span>${esc(x.text)}</span>${x.km ? `<span class="muted">${x.km < 1 ? `${Math.round(x.km * 1000)} m` : `${x.km.toFixed(1)} km`}</span>` : ''}</li>`).join('')}</ol></details>`;
 }
@@ -1012,6 +1065,8 @@ function drawTrip(origin, t, place, rd = null) {
   if (routes.length) {
     routes.slice(1, 2).forEach((r) => drawRoadLine(tripLayer, r.coords, true).bindTooltip(`${formatDuration(r.minutes)} · ${Math.round(r.km)} km`, { className: 'eta-chip alt', sticky: true }));
     drawRoadLine(tripLayer, routes[0].coords).bindTooltip(`${formatDuration(routes[0].minutes)} · ${Math.round(routes[0].km)} km`, { permanent: true, direction: 'center', className: 'eta-chip' });
+    drawTrafficSections(tripLayer, routes[0]);
+    drawIncidents(tripLayer, rd.incidents || []);
   } else {
     L.polyline(pts, { className: 'trip-line', weight: 4, dashArray: '6 8' }).addTo(tripLayer);
   }
@@ -1036,10 +1091,40 @@ function drawPickRoute(origin, trip, ctx) {
   rd.routes.slice(1, 2).forEach((r) => drawRoadLine(pickLayer, r.coords, true));
   const tr = typicalTraffic(ctx.clock);
   const r0 = rd.routes[0];
-  drawRoadLine(pickLayer, r0.coords).bindTooltip(`${formatDuration(r0.minutes * tr.factor)} · ${r0.km} km`, { permanent: true, direction: 'center', className: 'eta-chip' });
+  drawRoadLine(pickLayer, r0.coords).bindTooltip(`${formatDuration(r0.live ? r0.minutes : r0.minutes * tr.factor)} · ${r0.km} km`, { permanent: true, direction: 'center', className: 'eta-chip' });
+  drawTrafficSections(pickLayer, r0);
+  drawIncidents(pickLayer, rd.incidents || []);
+}
+
+// Slow parts of a live route in amber or red, on top of the blue line (like Google Maps).
+function drawTrafficSections(layer, r) {
+  for (const sec of r.traffic || []) {
+    const part = r.coords.slice(sec.from, sec.to + 1);
+    if (part.length > 1) L.polyline(part, { className: `road-traffic lvl-${Math.min(4, Math.max(1, sec.level))}`, weight: 6, interactive: false }).addTo(layer);
+  }
+}
+
+function drawIncidents(layer, list) {
+  for (const i of list) {
+    L.marker([i.lat, i.lng], { icon: L.divIcon({ html: incIcon(i.kind), className: 'pin-wrap', iconSize: null }), title: i.label, keyboard: false })
+      .bindPopup(`<div class="pop"><b>${esc(i.label)}</b>${i.where ? `<br>${esc(i.where)}` : ''}${i.delayMin ? `<br>About +${i.delayMin} min` : ''}<br><span class="muted">TomTom, live</span></div>`).addTo(layer);
+  }
+}
+
+// Map tab: every incident in view, refreshed when the map moves.
+let incTimer = null;
+function refreshIncidentLayer() {
+  if (!map) return;
+  if (incidentLayer) { incidentLayer.remove(); incidentLayer = null; }
+  if (!incidentsOn) return;
+  const b = map.getBounds();
+  incidentLayer = L.layerGroup().addTo(map);
+  const layer = incidentLayer;
+  fetchIncidents([b.getWest(), b.getSouth(), b.getEast(), b.getNorth()]).then((list) => { if (layer === incidentLayer) drawIncidents(layer, list); });
 }
 
 function initMap(el, fallback) {
+  incidentLayer = null;
   tripLayer = null;
   pickLayer = null;
   trafficLayer = null;
@@ -1077,7 +1162,7 @@ function setTraffic(on) {
 function filterBarHtml() {
   const n = countFilters(ui.filters);
   return `<button type="button" class="fbtn" data-fopen aria-haspopup="dialog">${IC.filter}Filters${n ? `<span class="badge">${n}</span>` : ''}</button>`
-    + (trafficAvailable ? `<button type="button" data-traffic aria-pressed="${trafficOn}">${IC.route}Live traffic</button>` : '')
+    + (trafficAvailable ? `<button type="button" data-traffic aria-pressed="${trafficOn}">${IC.route}Live traffic</button><button type="button" data-incidents aria-pressed="${incidentsOn}">${IC.alert}Incidents</button>` : '')
     + QUICK.map(([k, l, on]) => `<button type="button" data-quick-filter="${k}" aria-pressed="${on(ui.filters)}">${l}</button>`).join('');
 }
 
@@ -1092,6 +1177,7 @@ function bindFilterBar(root, ctx) {
   }));
   bar.querySelector('[data-fopen]').addEventListener('click', () => openSheet(root, ctx));
   bar.querySelector('[data-traffic]')?.addEventListener('click', (e) => { setTraffic(!trafficOn); e.currentTarget.setAttribute('aria-pressed', String(trafficOn)); });
+  bar.querySelector('[data-incidents]')?.addEventListener('click', (e) => { incidentsOn = !incidentsOn; e.currentTarget.setAttribute('aria-pressed', String(incidentsOn)); refreshIncidentLayer(); });
 }
 
 // ---- Search (like the operator apps): history, filters, a result count and picture rows ----
@@ -1317,8 +1403,10 @@ function renderDetail(root, ctx, ranking, car) {
   const start = originPoint();
   const rd = distanceKm(start, ch) >= 0.2 ? road([start, ch], { alternatives: tab === 'map' }) : null;
   const tr = typicalTraffic(ctx.clock);
-  const byRoad = rd?.routes?.[0] ? `<p class="road-line-note">${IC.route}<span><b>${formatDuration(rd.routes[0].minutes * tr.factor)}</b> · ${rd.routes[0].km} km by road · typical traffic ${tr.level.toLowerCase()}</span></p>` : '';
-  aside.innerHTML = detailHtml(d, byRoad + (cand ? timingLine(cand, ctx, cand.full ? cand.kWh : cand.deliveredKwh) : ''));
+  const r0 = rd?.routes?.[0];
+  const byRoad = r0 ? `<p class="road-line-note">${IC.route}<span><b>${formatDuration(r0.live ? r0.minutes : r0.minutes * tr.factor)}</b> · ${r0.km} km by road · ${r0.live ? (r0.delayMin ? `live traffic +${r0.delayMin} min` : 'live traffic: clear') : `typical traffic ${tr.level.toLowerCase()}`}</span></p>` : '';
+  const liveBays = ch.liveAvail ? `<p class="road-line-note live-bays"><span class="live-dot"></span><span><b>Live: ${ch.liveAvail.available} of ${ch.liveAvail.total} free</b>${ch.liveAvail.outOfService ? ` · ${ch.liveAvail.outOfService} out of service` : ''} · TomTom, ${ch.liveAt ? esc(fmtClock(new Date(ch.liveAt))) : 'now'}${ch.liveOcc == null ? '. Set the demo time to "Right now" to rank with it.' : ''}</span></p>` : '';
+  aside.innerHTML = detailHtml(d, liveBays + byRoad + (cand ? timingLine(cand, ctx, cand.full ? cand.kWh : cand.deliveredKwh) : ''));
   aside.hidden = false;
   row.classList.add('has-detail');
   if (!wasOpen && map) map.invalidateSize();

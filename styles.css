@@ -624,4 +624,23 @@ select.bare.big { font-size: 1.1rem; font-weight: 700; }
 .steps li { display: flex; justify-content: space-between; gap: 12px; font-size: 0.9rem; }
 .steps li.stop { font-weight: 700; color: var(--accent); }
 .road-line-note { background: var(--accent-soft); border-radius: 12px; padding: 10px 12px; }
+/* TomTom live: slow sections on routes, incident icons, live bays */
+.leaflet-container path.road-traffic { stroke-linecap: round; }
+.leaflet-container path.road-traffic.lvl-1 { stroke: #F2A33A; }
+.leaflet-container path.road-traffic.lvl-2 { stroke: #EA7A1C; }
+.leaflet-container path.road-traffic.lvl-3, .leaflet-container path.road-traffic.lvl-4 { stroke: #D93025; }
+.inc { display: inline-grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; color: #FFFFFF; flex: none; box-shadow: var(--shadow-sm); border: 2px solid #FFFFFF; }
+.pin-wrap .inc { transform: translate(-50%, -50%); }
+.inc .ic { width: 14px; height: 14px; }
+.inc-roadworks { background: #E8710A; }
+.inc-jam, .inc-accident { background: #D93025; }
+.inc-closed { background: #5F6368; }
+.inc-other { background: #B76E0B; }
+.incidents { background: var(--amber-soft); border-radius: 12px; padding: 10px 12px; display: grid; gap: 6px; font-size: 0.9rem; }
+.incidents ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.incidents li { display: flex; gap: 8px; align-items: flex-start; }
+.ok-line { display: flex; gap: 8px; align-items: center; font-size: 0.9rem; color: var(--accent); }
+.ok-line .ic { width: 18px; height: 18px; }
+.chip.avail .live-dot { width: 7px; height: 7px; margin-right: 4px; display: inline-block; }
+.live-bays .live-dot { width: 9px; height: 9px; border-radius: 50%; background: #1E9E5A; flex: none; margin-top: 6px; }
 [hidden] { display: none !important; } /* the hidden attribute must win over display rules like .detail { display: grid } */

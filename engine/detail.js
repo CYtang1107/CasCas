@@ -13,6 +13,8 @@ function accessLine(charger, condo, date, isResident) {
 
 // "AC 2/4 free": bays not in use (or booked, or out of service) right now.
 export function availability(charger, occupancy) {
+  // Live bays (TomTom) when the app is showing the present; otherwise the estimate.
+  if (charger.liveAvail && charger.liveOcc != null) return { free: charger.liveAvail.available, total: charger.liveAvail.total, live: true };
   const total = charger.bays || 0;
   return { free: Math.max(0, total - Math.ceil(total * Math.min(1, occupancy) - 1e-9)), total };
 }

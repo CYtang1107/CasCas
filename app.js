@@ -7,6 +7,7 @@ import { loadState, saveState, resetState } from './state.js';
 import { buildWorld } from './engine/world.js';
 import { purgePasses } from './engine/access.js';
 import { faultBays } from './engine/maintenance.js';
+import { attachLive } from './engine/tomtom.js';
 import { renderDriver, resetDriver } from './views/driver.js';
 import { renderJmb } from './views/jmb.js';
 
@@ -57,7 +58,11 @@ function render() {
     const live = api ? shared.live?.[ch.id] || null : null;
     return fault || booked || live ? { ...ch, bookedBays: booked + fault, faultBays: fault, live } : ch;
   });
-  const ctx = { state, clock, api, checkins: worldState.checkins, world: buildWorld(worldState, CONDOS, list), save: () => saveState(state), rerender: render, refresh };
+  // Live bays from TomTom. They only steer the picks while the demo clock shows the present.
+  const present = Math.abs(clock.getTime() - Date.now()) < 30 * 60e3;
+  const withLive = ttStations.length ? attachLive(list, ttStations).map((ch) => (ch.liveAvail && ch.liveAvail.total
+    ? { ...ch, liveAt: ttAt, liveOcc: present ? 1 - ch.liveAvail.available / ch.liveAvail.total : null } : ch)) : list;
+  const ctx = { state, clock, api, checkins: worldState.checkins, world: buildWorld(worldState, CONDOS, withLive), save: () => saveState(state), rerender: render, refresh };
   VIEWS[role](view, ctx);
 }
 
@@ -69,6 +74,19 @@ async function refresh() {
     else { api = null; showMode('This device only (server unavailable)'); }
   }
   render();
+}
+
+// TomTom live bays (only when the server has a key), refreshed every 5 minutes.
+let ttStations = [];
+let ttAt = null;
+async function loadLive() {
+  try {
+    const cfg = await (await fetch('api/config')).json();
+    if (!cfg.traffic) return;
+    const r = await fetch('api/tt/stations');
+    if (r.ok) { const d = await r.json(); ttStations = d.stations || []; ttAt = d.at; render(); }
+  } catch { /* stay on the estimate */ }
+  setTimeout(loadLive, 5 * 60e3);
 }
 
 function showSource({ source, ageDays }) {
@@ -129,6 +147,7 @@ async function start() {
     showSource(loaded);
     showMode('Shared demo: bookings are visible to everyone');
     await refresh();
+    loadLive();
   } else {
     const loaded = await loadChargers();
     chargers = loaded.chargers;

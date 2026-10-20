@@ -12,6 +12,7 @@ import { followRate, savings, overstayTotals } from '../engine/insights.js';
 import { validateEntry, cleanEntry, faultBays } from '../engine/maintenance.js';
 import { createStore } from './store.js';
 import { createCsms } from './ocpp.js';
+import { createTomTom, parsePoints, parseBbox } from './tomtom.js';
 import { createAuth } from './auth.js';
 import { cleanSession, cleanBooking, cleanCheckin, cleanSharing } from './validate.js';
 
@@ -69,6 +70,26 @@ export function createApp({ dataDir, secret, pins, ocmKey = '', ocppPassword = c
 
   app.get('/api/health', (req, res) => res.json({ ok: true }));
   app.get('/api/config', (req, res) => res.json({ traffic: !!trafficKey }));
+
+  // Live TomTom data (same key as the traffic tiles): bays, routes with traffic, incidents.
+  const tt = trafficKey ? createTomTom({ key: trafficKey, fetchFn, now }) : null;
+  const ttOff = (res) => bad(res, 'Live TomTom data is not set up on this server', 404);
+  app.get('/api/tt/stations', async (req, res) => {
+    if (!tt) return ttOff(res);
+    try { res.json(await tt.stations()); } catch { bad(res, 'TomTom unavailable', 502); }
+  });
+  app.get('/api/tt/route', async (req, res) => {
+    if (!tt) return ttOff(res);
+    const pts = parsePoints(req.query.pts);
+    if (!pts) return bad(res, 'Give 2 to 6 points as lat,lng;lat,lng');
+    try { res.json(await tt.route(pts, req.query.alt === '1')); } catch { bad(res, 'TomTom unavailable', 502); }
+  });
+  app.get('/api/tt/incidents', async (req, res) => {
+    if (!tt) return ttOff(res);
+    const bbox = parseBbox(req.query.bbox);
+    if (!bbox) return bad(res, 'Give bbox as west,south,east,north');
+    try { res.json(await tt.incidents(bbox)); } catch { bad(res, 'TomTom unavailable', 502); }
+  });
 
   // Live traffic map tiles from TomTom, fetched here so the key stays on the server. Each tile is
   // kept for a minute, which saves the free daily quota when many people look at the same area.

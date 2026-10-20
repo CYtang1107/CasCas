@@ -85,3 +85,8 @@ test('month summary: sessions, energy, paid and CO2 for this month only', () => 
   assert.equal(s.paidRm, 31);
   assert.ok(s.co2Kg > 0);
 });
+
+test('live bays win over the estimate when we have them', () => {
+  assert.deepEqual(availability({ bays: 4, liveAvail: { total: 2, available: 1 }, liveOcc: 0.5 }, 0.9), { free: 1, total: 2, live: true });
+  assert.deepEqual(availability({ bays: 4, liveAvail: { total: 2, available: 1 } }, 0.5), { free: 2, total: 4 }, 'live data but a different demo time: estimate');
+});
