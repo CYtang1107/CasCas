@@ -66,3 +66,15 @@ test('Ask CasCas understands a trip and the arrival target', () => {
   assert.equal(r2.set.arriveMin, 30);
   assert.equal(r2.set.placeId, 'ipoh');
 });
+
+test('a route with no fast chargers in our data says so, instead of blaming the battery', () => {
+  const p = planTrip({ chargers: [], origin: KL, date: new Date(2026, 9, 21, 9), arriveMinPct: 20, car: car('emas7'), startPct: 35, destination: { name: 'Kota Bharu', lat: 6.1254, lng: 102.2381 } });
+  assert.equal(p.ok, false);
+  assert.match(p.error, /no fast chargers/i);
+});
+
+test('KL to Kuantan is planned on the East Coast highway', () => {
+  const p = plan({ car: car('emas7'), startPct: 35, destination: { name: 'Kuantan', lat: 3.8077, lng: 103.326 } });
+  assert.equal(p.ok, true, p.error);
+  assert.ok(p.stops.length >= 1);
+});

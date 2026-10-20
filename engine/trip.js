@@ -43,7 +43,13 @@ export function planTrip({ chargers, car, startPct, arriveMinPct = 20, origin, d
       .map((c) => ({ c, km: roadKm(pos, c), left: roadKm(c, destination) }))
       .filter((o) => o.left < toDest - 5 && o.km + o.left - toDest <= Math.max(MAX_DETOUR_KM, toDest * 0.08) && pct - pctFor(o.km) >= MIN_STOP_PCT);
     if (!options.length) {
-      return { ok: false, error: `Cannot reach a fast charger towards ${destination.name} from ${pos.name} with ${Math.round(pct)}%. Charge near home first.`, legs, stops };
+      // Is there no charger on the way at all, or just none within the battery's reach?
+      const onTheWay = fast.some((c) => !stops.some((x) => x.charger.id === c.id) && roadKm(c, destination) < toDest - 5
+        && roadKm(pos, c) + roadKm(c, destination) - toDest <= Math.max(MAX_DETOUR_KM, toDest * 0.08));
+      const error = onTheWay
+        ? `Cannot reach a fast charger towards ${destination.name} from ${pos.name} with ${Math.round(pct)}%. Charge near home first.`
+        : `CasCas has no fast chargers on the way to ${destination.name} in its data yet (the demo covers the North–South and East Coast highways). Charge to ${Math.min(100, Math.ceil(pctFor(toDest) + arriveMinPct))}% before you go, or pick a closer stop.`;
+      return { ok: false, error, legs, stops };
     }
     // Go as far along as safely possible; a faster charger breaks near-ties.
     options.sort((a, b) => (a.left - b.left) || (b.c.kw - a.c.kw));

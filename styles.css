@@ -581,4 +581,20 @@ select.bare.big { font-size: 1.1rem; font-weight: 700; }
 .tab-account .about { justify-items: center; text-align: center; padding: 16px 0; }
 .version { color: var(--muted); font-size: 0.82rem; }
 @media (prefers-reduced-motion: reduce) { .switch, .switch::after { transition: none; } }
+/* Plan: typed From / To with suggestions */
+.route { position: relative; }
+.route .rrow { cursor: text; }
+.route input.bare-input { border: 0; border-radius: 0; background: transparent; padding: 2px 0; font: 600 1rem/1.3 var(--body); color: var(--fg); width: 100%; min-width: 0; min-height: 30px; outline: none; }
+.bare-input::placeholder { color: var(--muted); font-weight: 500; }
+.rrow:focus-within { box-shadow: inset 0 -2px 0 var(--accent); }
+.locbtn { width: 40px; height: 40px; flex: none; box-shadow: none; background: var(--accent-soft); color: var(--accent); }
+.suggest { list-style: none; margin: 0 -16px; padding: 6px 0; border-top: 1px solid var(--line); max-height: 320px; overflow-y: auto; }
+.suggest li { display: flex; align-items: center; gap: 12px; padding: 10px 16px; cursor: pointer; min-height: 48px; }
+.suggest li:hover, .suggest li[aria-selected="true"] { background: var(--accent-soft); }
+.suggest li > .ic { width: 20px; height: 20px; color: var(--accent); flex: none; }
+.suggest li span { display: grid; gap: 1px; min-width: 0; }
+.suggest li .muted { font-size: 0.8rem; }
+.suggest li.none { cursor: default; }
+.suggest li.credit { cursor: default; min-height: 0; padding: 6px 16px; font-size: 0.72rem; color: var(--muted); }
+.loc-msg { padding: 0 4px; }
 [hidden] { display: none !important; } /* the hidden attribute must win over display rules like .detail { display: grid } */

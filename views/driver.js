@@ -13,6 +13,8 @@ import { priceNote } from '../engine/pricing.js';
 import { siteArt, brandMark } from './art.js';
 import { co2AvoidedKg as co2Kg } from '../engine/economics.js';
 import { searchSites, categoryOf, remember } from '../engine/search.js';
+import { searchPlaces, localMatches, isTrip } from '../engine/geocode.js';
+import { CONDOS } from '../data/condos.js';
 import { bestWindow } from '../engine/schedule.js';
 import { parseRequest } from '../engine/assistant.js';
 import { planTrip } from '../engine/trip.js';
@@ -49,6 +51,7 @@ const IC = {
   filter: svg('M4 6h16M7 12h10M10 18h4'),
   close: svg('M6 6l12 12M18 6 6 18'),
   check: svg('M5 12.5 10 17l9-10'),
+  locate: svg('M12 19a7 7 0 1 0 0-14 7 7 0 0 0 0 14zM12 2v3M12 19v3M2 12h3M19 12h3M12 14.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5z'),
   back: svg('M15 5 8 12l7 7'),
   car: svg('M5 16h14M6 16l1.5-5h9L18 16v3H6zM8 19v1M16 19v1M8.5 13.5h.01M15.5 13.5h.01'),
   tag: svg('M3 12V4h8l10 10-8 8z M7.5 7.5h.01'),
@@ -61,8 +64,17 @@ const IC = {
 };
 const availChip = (ch, occ) => { const a = availability(ch, occ); return `<span class="chip avail ${a.free ? 'on' : 'warn'}">${ch.type} ${a.free}/${a.total} free</span>`; };
 const navUrl = (ch) => `https://www.google.com/maps/dir/?api=1&destination=${ch.lat},${ch.lng}`;
-const placeOf = (id) => ALL_PLACES.find((p) => p.id === id) || PLACES[0];
-const fresh = () => ({ carId: 'emas7', battery: 35, placeId: 'klem', homeId: '', parkFor: '30m', stage: 'pick', pick: null, flash: '', pending: null, plate: '', selected: null, prefs: noPrefs(), ask: '', askNote: '', arriveMin: 20, filters: emptyFilters() });
+// Start point: your GPS position or a place you typed, else your condo, else KL East.
+function originPoint() {
+  if (ui.from) return ui.from;
+  const home = CONDOS.find((c) => c.id === ui.homeId);
+  return home ? { name: home.name, lat: home.lat, lng: home.lng, kind: 'condo' } : { ...START, name: 'KL East', kind: 'demo' };
+}
+// A typed destination ('custom') is a long trip when it is more than about 40 km away.
+const placeOf = (id) => (id === 'custom' && ui.customTo
+  ? { ...ui.customTo, trip: isTrip(originPoint(), ui.customTo) }
+  : ALL_PLACES.find((p) => p.id === id) || PLACES[0]);
+const fresh = () => ({ carId: 'emas7', battery: 35, placeId: 'klem', homeId: '', parkFor: '30m', stage: 'pick', pick: null, flash: '', pending: null, plate: '', selected: null, prefs: noPrefs(), ask: '', askNote: '', arriveMin: 20, filters: emptyFilters(), from: null, customTo: null, locMsg: '' });
 let ui = fresh();
 let map = null;
 let layer = null;
@@ -145,12 +157,14 @@ export function renderDriver(root, ctx, which = 'home') {
       </div>
       ${askForm(false)}
       <div class="fcard route">
-        <label class="rrow">${IC.home}<span class="rtxt"><span class="lbl">From</span>
-          <select id="d-home" class="bare"><option value="">KL East (current location)</option>${condos.map((c) => `<option value="${c.id}">My condo: ${esc(c.name)}</option>`).join('')}</select></span></label>
-        <label class="rrow">${IC.pin}<span class="rtxt"><span class="lbl">To</span>
-          <select id="d-place" class="bare"><optgroup label="Around KL East">${PLACES.map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join('')}</optgroup>
-          <optgroup label="Longer trips">${TRIP_PLACES.map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join('')}</optgroup></select></span></label>
+        <div class="rrow">${IC.home}<label class="rtxt"><span class="lbl">From</span>
+          <input id="d-from" class="bare-input" type="text" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="d-suggest" autocomplete="off" enterkeyhint="next" value="${esc(originPoint().name)}" placeholder="Current location or a place"></label>
+          <button type="button" class="round locbtn" data-locate aria-label="Use my current location">${IC.locate}</button></div>
+        <div class="rrow">${IC.pin}<label class="rtxt"><span class="lbl">To</span>
+          <input id="d-to" class="bare-input" type="text" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="d-suggest" autocomplete="off" enterkeyhint="go" value="${esc(placeOf(ui.placeId).name)}" placeholder="Where to?"></label></div>
+        <ul class="suggest" id="d-suggest" role="listbox" aria-label="Suggestions" hidden></ul>
       </div>
+      ${ui.locMsg ? `<p class="muted loc-msg" role="status">${esc(ui.locMsg)}</p>` : ''}
       <div class="fcard vehicle">
         <div class="vrow"><label class="vcar"><span class="sr-only">Car</span><select id="d-car" class="bare big">${CARS.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select></label>
           <span class="vspec" id="d-vspec"></span></div>
@@ -186,14 +200,12 @@ export function renderDriver(root, ctx, which = 'home') {
   }));
   root.querySelectorAll('[data-seg]').forEach((b) => b.addEventListener('click', () => {
     const trip = b.dataset.seg === 'trip';
-    if (trip !== !!placeOf(ui.placeId).trip) ui.placeId = trip ? 'melaka' : 'klem';
+    if (trip !== !!placeOf(ui.placeId).trip) { ui.placeId = trip ? 'melaka' : 'klem'; ui.customTo = null; }
     renderDriver(root, ctx, 'plan');
   }));
   if (which === 'plan') {
     $('#d-car').value = ui.carId;
     $('#d-batt').value = ui.battery;
-    $('#d-place').value = ui.placeId;
-    $('#d-home').value = ui.homeId;
     $(`input[name="d-park"][value="${ui.parkFor}"]`).checked = true;
     $('#d-arrive').value = ui.arriveMin;
     $('#d-arrive').addEventListener('input', (e) => { ui.arriveMin = Number(e.target.value); update(root, ctx); });
@@ -205,13 +217,7 @@ export function renderDriver(root, ctx, which = 'home') {
     $('#d-op').addEventListener('change', (e) => { ui.prefs.operator = e.target.value || null; update(root, ctx); });
     $('#d-car').addEventListener('change', (e) => { ui.carId = e.target.value; update(root, ctx); });
     $('#d-batt').addEventListener('input', (e) => { ui.battery = Number(e.target.value); update(root, ctx); });
-    $('#d-place').addEventListener('change', (e) => {
-      ui.placeId = e.target.value;
-      $('#d-arrive-wrap').hidden = !placeOf(ui.placeId).trip;
-      $('#d-park-wrap').hidden = placeOf(ui.placeId).trip;
-      update(root, ctx);
-    });
-    $('#d-home').addEventListener('change', (e) => { ui.homeId = e.target.value; update(root, ctx); });
+    bindRoute(root, ctx);
     root.querySelectorAll('input[name="d-park"]').forEach((r) => r.addEventListener('change', (e) => { ui.parkFor = e.target.value; update(root, ctx); }));
   }
 
@@ -219,6 +225,7 @@ export function renderDriver(root, ctx, which = 'home') {
   update(root, ctx);
   if (which === 'map' && ui.selected) focusSelected();
   if (ui.stage === 'charging' && !timer) startTimer();
+  if (which === 'plan') autoLocate(root, ctx);
 }
 
 const greeting = (d) => (d.getHours() < 12 ? 'Good morning' : d.getHours() < 18 ? 'Good afternoon' : 'Good evening');
@@ -228,7 +235,7 @@ function summaryLine() {
   const car = CARS.find((c) => c.id === ui.carId);
   const place = placeOf(ui.placeId);
   const stay = place.trip ? `arrive with ${ui.arriveMin}%` : PARK_OPTIONS.find(([v]) => v === ui.parkFor)[1].toLowerCase();
-  return `${car.name} · ${ui.battery}% · to ${place.name} · ${stay}`;
+  return `${car.name} · ${ui.battery}% · ${originPoint().name} → ${place.name} · ${stay}`;
 }
 
 // Home: the one best charger for the current settings (or the trip), condo bays nearby, your month.
@@ -262,7 +269,7 @@ function homeHtml(r, ctx, trip, place) {
 // A sideways row of picture cards, one per place (a mall's AC and DC chargers are one place),
 // like the operator apps' "While you shop".
 function placeRow(ctx, title, keep) {
-  const origin = ui.homeId ? ctx.world.condos.find((c) => c.id === ui.homeId) : START;
+  const origin = originPoint();
   const places = new Map();
   for (const ch of ctx.world.chargers.filter(keep)) {
     const key = ch.name.replace(/ (DC|AC)$/, '');
@@ -413,8 +420,8 @@ function activityHtml(ctx, r) {
 
 function compute(ctx) {
   const car = CARS.find((c) => c.id === ui.carId);
-  const home = ctx.world.condos.find((c) => c.id === ui.homeId) || null;
-  const origin = home ? { lat: home.lat, lng: home.lng } : START;
+  const start = originPoint();
+  const origin = { lat: start.lat, lng: start.lng };
   const place = placeOf(ui.placeId);
   const destination = place.id === 'here' ? null : place;
   const ranking = rankChargers({
@@ -423,7 +430,7 @@ function compute(ctx) {
   });
   const trip = place.trip
     ? planTrip({ chargers: [...HIGHWAY_CHARGERS, ...ctx.world.chargers], car, startPct: ui.battery, arriveMinPct: ui.arriveMin,
-      origin: { ...origin, name: home ? home.name : 'KL East' }, destination: place, date: ctx.clock })
+      origin: { ...origin, name: start.name }, destination: place, date: ctx.clock })
     : null;
   return { car, origin, ranking, trip, place };
 }
@@ -468,6 +475,104 @@ function ask(root, ctx, text) {
   else renderDriver(root, ctx, 'plan');
 }
 
+// ---- From / To: type a place, pick a suggestion, or use your location ----
+let suggestTimer = null;
+let suggestSeq = 0;
+
+function useLocation(root, ctx, { quiet = false } = {}) {
+  if (!navigator.geolocation) { ui.locMsg = 'This browser cannot share its location. Type where you are starting instead.'; renderDriver(root, ctx, 'plan'); return; }
+  if (!quiet) { ui.locMsg = 'Finding your location…'; renderDriver(root, ctx, 'plan'); }
+  navigator.geolocation.getCurrentPosition(
+    (pos) => {
+      ui.from = { name: 'Current location', lat: pos.coords.latitude, lng: pos.coords.longitude, kind: 'gps' };
+      ui.locMsg = `Using your location (±${Math.round(pos.coords.accuracy)} m). It stays on this phone.`;
+      if (tab === 'plan') renderDriver(root, ctx, 'plan');
+    },
+    (err) => {
+      if (quiet) return;
+      ui.locMsg = err.code === 1 ? 'Location is off for this site, so CasCas starts from KL East. Allow it in the browser, or type your start.'
+        : 'Could not find your location just now. Starting from KL East.';
+      if (tab === 'plan') renderDriver(root, ctx, 'plan');
+    },
+    { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 },
+  );
+}
+
+// If the user already allowed location for this site, use it without asking again.
+export async function autoLocate(root, ctx) {
+  if (ui.from || !navigator.permissions?.query) return;
+  try {
+    const st = await navigator.permissions.query({ name: 'geolocation' });
+    if (st.state === 'granted') useLocation(root, ctx, { quiet: true });
+  } catch { /* not supported */ }
+}
+
+function bindRoute(root, ctx) {
+  const list = root.querySelector('#d-suggest');
+  const from = root.querySelector('#d-from');
+  const to = root.querySelector('#d-to');
+  let field = null;
+  let items = [];
+
+  const close = () => { list.hidden = true; list.innerHTML = ''; [from, to].forEach((i) => i.setAttribute('aria-expanded', 'false')); };
+  const choose = (it) => {
+    close();
+    if (it.kind === 'locate') { useLocation(root, ctx); return; }
+    if (field === from) {
+      if (it.kind === 'home') ui.from = null;
+      else ui.from = { name: it.name, lat: it.lat, lng: it.lng, kind: 'place' };
+      ui.locMsg = '';
+    } else if (it.id && it.id !== 'custom') {
+      ui.placeId = it.id;
+    } else {
+      ui.customTo = { id: 'custom', name: it.name, lat: it.lat, lng: it.lng };
+      ui.placeId = 'custom';
+    }
+    renderDriver(root, ctx, 'plan');
+  };
+  const draw = () => {
+    list.innerHTML = items.map((it, i) => `<li role="option" id="d-sg-${i}" data-i="${i}" aria-selected="false">${IC[it.icon] || IC.pin}<span><b>${esc(it.name)}</b>${it.sub ? `<span class="muted">${esc(it.sub)}</span>` : ''}</span></li>`).join('')
+      || '<li class="muted none">No match yet. Keep typing…</li>';
+    if (items.some((it) => it.source === 'search')) list.innerHTML += '<li class="credit" aria-hidden="true">Place search: Photon · © OpenStreetMap contributors</li>';
+    list.hidden = false;
+    field.setAttribute('aria-expanded', 'true');
+    list.querySelectorAll('[data-i]').forEach((li) => li.addEventListener('mousedown', (e) => { e.preventDefault(); choose(items[Number(li.dataset.i)]); }));
+  };
+  const suggest = (input) => {
+    field = input;
+    const q = input.value.trim();
+    const own = field === from
+      ? [{ kind: 'locate', name: 'Use my current location', icon: 'locate' },
+        ...(ui.homeId ? [{ kind: 'home', name: `My condo: ${CONDOS.find((c) => c.id === ui.homeId)?.name}`, icon: 'home' }] : []),
+        { kind: 'home', name: 'KL East (demo start)', icon: 'home' }]
+      : [];
+    const known = [...ALL_PLACES.filter((p) => p.id !== 'here'), ...CONDOS.map((c) => ({ id: null, name: c.name, lat: c.lat, lng: c.lng }))];
+    const local = q ? localMatches(q, known).slice(0, 5).map((p) => ({ ...p, sub: p.trip ? 'Longer trip' : 'Around KL East', icon: p.trip ? 'route' : 'pin' })) : [];
+    items = [...(q ? own.filter((o) => o.name.toLowerCase().includes(q.toLowerCase())) : own), ...local];
+    draw();
+    clearTimeout(suggestTimer);
+    if (q.length < 3) return;
+    const seq = ++suggestSeq;
+    suggestTimer = setTimeout(async () => {
+      const found = await searchPlaces(q, originPoint());
+      if (seq !== suggestSeq || field !== input) return;
+      const names = new Set(items.map((x) => x.name.toLowerCase()));
+      items = [...items, ...found.filter((f) => !names.has(f.name.toLowerCase())).map((f) => ({ ...f, icon: 'pin' }))];
+      draw();
+    }, 350);
+  };
+  for (const input of [from, to]) {
+    input.addEventListener('focus', () => { input.select(); suggest(input); });
+    input.addEventListener('input', () => suggest(input));
+    input.addEventListener('blur', () => setTimeout(close, 150));
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') { close(); input.blur(); }
+      if (e.key === 'Enter') { e.preventDefault(); const first = items.find((x) => x.kind !== 'locate') || items[0]; if (first) choose(first); }
+    });
+  }
+  root.querySelector('[data-locate]').addEventListener('click', () => useLocation(root, ctx));
+}
+
 // When should the driver charge at this site? The cheapest open hour in the next 24 h.
 function timingLine(c, ctx, kWh) {
   const b = bestWindow({ charger: c.charger, condo: c.condo, isResident: c.isResident, from: ctx.clock, hours: 24, kWh });
@@ -506,7 +611,7 @@ function tripHtml(t, place, ctx) {
 
 // "Condo bays near you": every pilot condo, sideways-scrolling cards like a CPO app's Nearby list.
 function condosHtml(ctx) {
-  const origin = START;
+  const origin = originPoint();
   const cards = ctx.world.chargers.filter((ch) => ch.siteType === 'condo').map((ch) => {
     const condo = ctx.world.condos.find((c) => c.id === ch.condoId);
     const mine = condo.id === ui.homeId;
@@ -882,7 +987,7 @@ function bindFilterBar(root, ctx) {
 
 // ---- Search (like the operator apps): history, filters, a result count and picture rows ----
 function searchRows(ctx) {
-  const origin = ui.homeId ? ctx.world.condos.find((c) => c.id === ui.homeId) : START;
+  const origin = originPoint();
   const sites = ctx.world.chargers
     .filter((ch) => passesFilter(ch, ctx) && (!search.saved || ctx.state.favourites.includes(ch.id)))
     .map((ch) => ({ id: ch.id, name: ch.name, operator: ch.operator, type: `${ch.type} ${ch.kw}kW`, category: categoryOf(ch), address: ch.address || '', km: distanceKm(origin, ch), ch }));

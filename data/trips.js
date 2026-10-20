@@ -7,6 +7,7 @@ export const TRIP_PLACES = [
   { id: 'ipoh', name: 'Ipoh', lat: 4.5975, lng: 101.0901, words: ['ipoh'], trip: true },
   { id: 'jb', name: 'Johor Bahru', lat: 1.4927, lng: 103.7414, words: ['johor bahru', 'johor', 'jb'], trip: true },
   { id: 'penang', name: 'Penang', lat: 5.4141, lng: 100.3288, words: ['penang', 'pulau pinang'], trip: true },
+  { id: 'kuantan', name: 'Kuantan', lat: 3.8077, lng: 103.3260, words: ['kuantan'], trip: true },
 ];
 
 const hw = (id, name, lat, lng, kw, price = 1.3) => ({
@@ -27,4 +28,10 @@ export const HIGHWAY_CHARGERS = [
   hw('gopeng', 'Gopeng', 4.4700, 101.1600, 60),
   hw('kualakangsar', 'Kuala Kangsar', 4.7700, 100.9300, 60),
   hw('semanggol', 'Gunung Semanggol R&R', 5.0800, 100.6200, 120),
+  // East Coast (Karak and LPT)
+  hw('gentingsempah', 'Genting Sempah R&R', 3.3600, 101.7900, 120),
+  hw('bentong', 'Bentong', 3.5200, 101.9100, 60),
+  hw('temerloh', 'Temerloh R&R', 3.4500, 102.4200, 120),
+  hw('maran', 'Maran', 3.5900, 102.7700, 60),
+  hw('gambang', 'Gambang R&R', 3.7100, 103.1000, 120),
 ];
