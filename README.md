@@ -6,7 +6,7 @@ Two front doors, one codebase:
 
 | | Shared demo (Render) | This device only (GitHub Pages) |
 |---|---|---|
-| **Driver app** (Home, Map, Plan, Activity) | https://cascas-ivi8.onrender.com/ | https://cytang1107.github.io/CasCas/ |
+| **Driver app** (Home, Map, Plan, Activity, Account) | https://cascas-ivi8.onrender.com/ | https://cytang1107.github.io/CasCas/ |
 | **JMB portal** | https://cascas-ivi8.onrender.com/jmb.html | https://cytang1107.github.io/CasCas/jmb.html |
 
 A condo's own portal link: add its id, e.g. `jmb.html#lumina`. Bookings made in the driver app show up in the portal (live on Render).

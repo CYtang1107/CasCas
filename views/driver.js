@@ -11,6 +11,7 @@ import { distanceKm } from '../engine/geo.js';
 import { emptyFilters, countFilters, matchesFilters, FAST_KW } from '../engine/filters.js';
 import { priceNote } from '../engine/pricing.js';
 import { siteArt, brandMark } from './art.js';
+import { co2AvoidedKg as co2Kg } from '../engine/economics.js';
 import { searchSites, categoryOf, remember } from '../engine/search.js';
 import { bestWindow } from '../engine/schedule.js';
 import { parseRequest } from '../engine/assistant.js';
@@ -49,6 +50,13 @@ const IC = {
   close: svg('M6 6l12 12M18 6 6 18'),
   check: svg('M5 12.5 10 17l9-10'),
   back: svg('M15 5 8 12l7 7'),
+  car: svg('M5 16h14M6 16l1.5-5h9L18 16v3H6zM8 19v1M16 19v1M8.5 13.5h.01M15.5 13.5h.01'),
+  tag: svg('M3 12V4h8l10 10-8 8z M7.5 7.5h.01'),
+  sun: svg('M12 16a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4'),
+  help: svg('M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.7.3-1 .9-1 1.7M12 17h.01'),
+  shield: svg('M12 3 5 6v6c0 4.5 3 7.5 7 9 4-1.5 7-4.5 7-9V6z'),
+  doc: svg('M7 3h7l5 5v13H7zM14 3v5h5M10 13h6M10 17h6'),
+  building: svg('M4 21V7l8-4 8 4v14M9 21v-5h6v5M8 10h2M14 10h2M8 13h2M14 13h2'),
   bookmark: svg('M7 4h10v16l-5-4-5 4z'),
 };
 const availChip = (ch, occ) => { const a = availability(ch, occ); return `<span class="chip avail ${a.free ? 'on' : 'warn'}">${ch.type} ${a.free}/${a.total} free</span>`; };
@@ -63,10 +71,12 @@ let markers = new Map();
 let last = null; // latest { ranking, car }, for the detail panel
 let tab = 'home';
 let current = null; // { root, ctx } of the tab on screen, for the charging timer
+let profileApplied = false;
 
 export function resetDriver() {
   stopTimer();
   ui = fresh();
+  profileApplied = false;
 }
 
 // The driver side is four tabs, like the operator apps: Home, Map, Plan and Activity.
@@ -92,6 +102,12 @@ export function renderDriver(root, ctx, which = 'home') {
     </div>`;
   const trip = summaryLine();
 
+  if (!profileApplied) applyProfile(ctx.state.profile);
+  if (which === 'account') {
+    root.innerHTML = `<div class="driver tab-account" id="d-account">${accountHtml(ctx)}</div>`;
+    bindAccount(root, ctx);
+    return;
+  }
   if (which === 'home') {
     root.innerHTML = `
     <div class="driver tab-home">
@@ -121,30 +137,32 @@ export function renderDriver(root, ctx, which = 'home') {
   } else {
     root.innerHTML = `
   <div class="driver tab-plan">
-    <section class="panel trip" aria-label="Trip">
+    <section class="plan-form" aria-label="Trip">
       <h2>Plan</h2>
       <div class="segmented" role="group" aria-label="Plan type">
         <button type="button" data-seg="nearby" aria-pressed="${!placeOf(ui.placeId).trip}">Charge nearby</button>
         <button type="button" data-seg="trip" aria-pressed="${!!placeOf(ui.placeId).trip}">Long trip</button>
       </div>
       ${askForm(false)}
-      <div class="fields">
-      <label class="field">Car
-        <select id="d-car">${CARS.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select></label>
-      <label class="field">Battery now <output id="d-batt-out"></output>
-        <input id="d-batt" type="range" min="5" max="100" step="1"></label>
-      <label class="field">Going to
-        <select id="d-place"><optgroup label="Around KL East">${PLACES.map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join('')}</optgroup>
-          <optgroup label="Longer trips">${TRIP_PLACES.map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join('')}</optgroup></select></label>
-      <label class="field" id="d-arrive-wrap" ${placeOf(ui.placeId).trip ? '' : 'hidden'}>Arrive with at least <output id="d-arrive-out"></output>
-        <input id="d-arrive" type="range" min="5" max="50" step="1"></label>
-      <label class="field">I live at
-        <select id="d-home"><option value="">Not a resident here</option>${condos.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select></label>
-      <fieldset class="field seg" id="d-park-wrap" ${placeOf(ui.placeId).trip ? 'hidden' : ''}><legend>How long will you park?</legend>
-        ${PARK_OPTIONS.map(([v, l]) => `<label><input type="radio" name="d-park" value="${v}"> ${l}</label>`).join('')}
-      </fieldset>
+      <div class="fcard route">
+        <label class="rrow">${IC.home}<span class="rtxt"><span class="lbl">From</span>
+          <select id="d-home" class="bare"><option value="">KL East (current location)</option>${condos.map((c) => `<option value="${c.id}">My condo: ${esc(c.name)}</option>`).join('')}</select></span></label>
+        <label class="rrow">${IC.pin}<span class="rtxt"><span class="lbl">To</span>
+          <select id="d-place" class="bare"><optgroup label="Around KL East">${PLACES.map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join('')}</optgroup>
+          <optgroup label="Longer trips">${TRIP_PLACES.map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join('')}</optgroup></select></span></label>
       </div>
-      <details class="prefs" ${hasPrefs() ? 'open' : ''}><summary>My preferences${hasPrefs() ? ' (on)' : ''}</summary>
+      <div class="fcard vehicle">
+        <div class="vrow"><label class="vcar"><span class="sr-only">Car</span><select id="d-car" class="bare big">${CARS.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select></label>
+          <span class="vspec" id="d-vspec"></span></div>
+        <label class="slider"><span class="srow2"><span>Battery now</span><output id="d-batt-out"></output></span>
+          <input id="d-batt" type="range" min="5" max="100" step="1"></label>
+        <label class="slider" id="d-arrive-wrap" ${placeOf(ui.placeId).trip ? '' : 'hidden'}><span class="srow2"><span>Arrive with at least</span><output id="d-arrive-out"></output></span>
+          <input id="d-arrive" type="range" min="5" max="50" step="1"></label>
+      </div>
+      <fieldset class="fcard park" id="d-park-wrap" ${placeOf(ui.placeId).trip ? 'hidden' : ''}><legend>How long will you park?</legend>
+        <div class="pills">${PARK_OPTIONS.map(([v, l]) => `<label><input type="radio" name="d-park" value="${v}"><span>${l}</span></label>`).join('')}</div>
+      </fieldset>
+      <details class="fcard prefs" ${hasPrefs() ? 'open' : ''}><summary>My preferences${hasPrefs() ? ' (on)' : ''}</summary>
         <div class="fields">
           <label class="field">Budget <select id="d-budget">${BUDGETS.map(([v, l]) => `<option value="${v}">${l}</option>`).join('')}</select></label>
           <label class="field">Charging speed <select id="d-speed"><option value="any">Any</option><option value="fast">Fast DC only</option></select></label>
@@ -264,6 +282,116 @@ function placeRow(ctx, title, keep) {
   return cards ? `<section class="prow" aria-label="${esc(title)}"><div class="sec-head"><h3>${esc(title)}</h3><a href="#map">Map</a></div><div class="pcards">${cards}</div></section>` : '';
 }
 
+// ---------- Account (like the operator apps' Account tab) ----------
+// Settings live on this device only: there are no accounts in the prototype.
+function applyProfile(p) {
+  profileApplied = true;
+  if (!p) return;
+  if (p.carId && CARS.some((c) => c.id === p.carId)) ui.carId = p.carId;
+  if (p.homeId) ui.homeId = p.homeId;
+  if (p.prefs) ui.prefs = { ...noPrefs(), ...p.prefs };
+}
+
+const initials = (name) => (name.trim().split(/\s+/).map((w) => w[0]).join('').slice(0, 2) || 'D').toUpperCase();
+
+function accountHtml(ctx) {
+  const p = ctx.state.profile;
+  const name = p.name || 'Guest driver';
+  const sessions = ctx.state.sessions;
+  const kWh = sessions.reduce((t, x) => t + x.kWh, 0);
+  const car = CARS.find((c) => c.id === (p.carId || ui.carId));
+  const condo = ctx.world.condos.find((c) => c.id === p.homeId);
+  const saved = ctx.world.chargers.filter((c) => ctx.state.favourites.includes(c.id));
+  const row = (ic, label, value, attrs) => `<button type="button" class="arow" ${attrs}>${IC[ic]}<span>${label}</span>${value ? `<span class="aval">${value}</span>` : ''}<span class="chev" aria-hidden="true">›</span></button>`;
+  const source = document.getElementById('data-source')?.textContent || '';
+  const mode = document.getElementById('data-mode')?.textContent || '';
+  return `
+    <section class="profile">
+      <div class="avatar" aria-hidden="true">${esc(initials(name))}</div>
+      <h2>${esc(name)}</h2>
+      <button type="button" class="pill-btn" data-a="name">Edit name</button>
+      <div class="pstats"><div><span>Output (kWh)</span><b>${kWh.toFixed(1)}</b></div><div><span>Sessions</span><b>${sessions.length}</b></div><div><span>CO₂ avoided (kg)</span><b>${Math.round(co2Kg(kWh))}</b></div></div>
+    </section>
+    <h3 class="agroup">My profile</h3>
+    <div class="alist">
+      <label class="arow">${IC.car}<span>My car</span><select id="a-car" class="bare">${CARS.map((c) => `<option value="${c.id}" ${car?.id === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></label>
+      <label class="arow">${IC.home}<span>My condo</span><select id="a-home" class="bare"><option value="">None</option>${ctx.world.condos.map((c) => `<option value="${c.id}" ${condo?.id === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></label>
+    </div>
+    <h3 class="agroup">Records</h3>
+    <div class="alist">
+      ${row('clock', 'Charging history', `${sessions.length}`, 'data-a="history"')}
+      ${row('bookmark', 'Saved chargers', `${saved.length}`, 'data-a="saved"')}
+    </div>
+    <div class="adrop" id="a-saved" hidden>${saved.length ? `<ul class="hist">${saved.map((c) => `<li><div><b>${esc(c.name)}</b><span class="muted">${esc(c.operator)} · ${c.type} ${c.kw} kW</span></div><button type="button" class="btn small" data-detail="${esc(c.id)}">On map</button></li>`).join('')}</ul>` : '<p class="muted">Tap the bookmark on a search result to save a charger.</p>'}</div>
+    <h3 class="agroup">Charging preferences</h3>
+    <div class="alist">
+      <label class="arow">${IC.tag}<span>Budget</span><select id="a-budget" class="bare">${BUDGETS.map(([v, l]) => `<option value="${v}" ${String(ui.prefs.maxPrice ?? '') === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+      <label class="arow">${IC.bolt}<span>Fast DC only</span><input type="checkbox" class="switch" id="a-fast" ${ui.prefs.fastOnly ? 'checked' : ''}></label>
+      <label class="arow">${IC.map}<span>Preferred operator</span><select id="a-op" class="bare"><option value="">Any</option>${OPERATORS.map((o) => `<option ${ui.prefs.operator === o ? 'selected' : ''}>${o}</option>`).join('')}</select></label>
+    </div>
+    <h3 class="agroup">General</h3>
+    <div class="alist">
+      <label class="arow">${IC.sun}<span>Dark theme</span><input type="checkbox" class="switch" id="a-theme" ${p.theme === 'dark' ? 'checked' : ''}></label>
+      ${row('help', 'Help and FAQ', '', 'data-a="faq"')}
+      ${row('shield', 'Privacy', '', 'data-a="privacy"')}
+      ${row('doc', 'Terms of the demo', '', 'data-a="terms"')}
+      <a class="arow" href="jmb.html">${IC.building}<span>Manage a condo? JMB portal</span><span class="chev" aria-hidden="true">›</span></a>
+    </div>
+    <div class="adrop" id="a-faq" hidden>
+      <p><b>How does CasCas pick a charger?</b> By your battery: low battery puts the quickest working charger first, a full one puts cheaper and quieter ones first. Your budget, speed and operator preferences come on top.</p>
+      <p><b>Can I charge at a condo I don't live in?</b> Yes, during the hours its JMB shares bays. Book, enter your plate, and the guardhouse lets you in.</p>
+      <p><b>What if I stay too long?</b> After your slot it is ${rm(CONST.overstayRmPer10Min)} per 10 minutes, paid to the condo, so the next driver can charge.</p>
+    </div>
+    <div class="adrop" id="a-privacy" hidden>
+      <p>Bookings are logged by an anonymous ID such as "Visitor #48". Your number plate is shown only to that condo's management, behind its PIN, and deleted 30 days after the visit. Your name, car and saved chargers stay on this device.</p>
+    </div>
+    <div class="adrop" id="a-terms" hidden>
+      <p>This is a prototype for the Sime Darby Property University Hackathon 2026. Condo bays, occupancy, history and highway chargers are simulated; condo names are fictional. Public chargers come from Open Charge Map when the server has a key. Nothing here takes payment.</p>
+    </div>
+    <section class="about"><p class="muted">${esc(source)}${mode ? ` · ${esc(mode)}` : ''}</p>
+      <button class="btn danger" type="button" data-reset>Reset demo</button>
+      <p class="version">CasCas prototype · version 0.9</p></section>`;
+}
+
+function saveProfile(ctx, patch) {
+  ctx.state.profile = { ...ctx.state.profile, ...patch };
+  ctx.save();
+}
+
+function bindAccount(root, ctx) {
+  const $ = (sel) => root.querySelector(sel);
+  const redraw = () => { $('#d-account').innerHTML = accountHtml(ctx); bindAccount(root, ctx); };
+  $('#a-car').addEventListener('change', (e) => { ui.carId = e.target.value; saveProfile(ctx, { carId: ui.carId }); });
+  $('#a-home').addEventListener('change', (e) => { ui.homeId = e.target.value; saveProfile(ctx, { homeId: ui.homeId }); });
+  const prefs = () => saveProfile(ctx, { prefs: { ...ui.prefs } });
+  $('#a-budget').addEventListener('change', (e) => { ui.prefs.maxPrice = e.target.value ? Number(e.target.value) : null; prefs(); });
+  $('#a-fast').addEventListener('change', (e) => { ui.prefs.fastOnly = e.target.checked; prefs(); });
+  $('#a-op').addEventListener('change', (e) => { ui.prefs.operator = e.target.value || null; prefs(); });
+  $('#a-theme').addEventListener('change', (e) => {
+    const theme = e.target.checked ? 'dark' : 'light';
+    document.documentElement.dataset.theme = theme;
+    saveProfile(ctx, { theme });
+  });
+  root.querySelectorAll('[data-a]').forEach((b) => b.addEventListener('click', () => {
+    const a = b.dataset.a;
+    if (a === 'name') {
+      const box = document.createElement('form');
+      box.className = 'name-edit';
+      box.innerHTML = `<label class="search"><span class="sr-only">Your name</span><input id="a-name" maxlength="40" autocomplete="name" value="${esc(ctx.state.profile.name)}" placeholder="Your name"></label><button class="btn primary" type="submit">Save</button>`;
+      b.replaceWith(box);
+      box.querySelector('input').focus();
+      box.addEventListener('submit', (e) => { e.preventDefault(); saveProfile(ctx, { name: box.querySelector('input').value.trim().slice(0, 40) }); redraw(); });
+      return;
+    }
+    if (a === 'history') { location.hash = '#activity'; return; }
+    const panel = $(`#a-${a}`);
+    panel.hidden = !panel.hidden;
+    b.setAttribute('aria-expanded', String(!panel.hidden));
+    panel.querySelectorAll('[data-detail]').forEach((d) => d.addEventListener('click', () => { ui.selected = d.dataset.detail; location.hash = '#map'; }));
+  }));
+  root.querySelector('[data-reset]').addEventListener('click', () => document.getElementById('reset')?.click());
+}
+
 // Activity: the booking or charge in progress, otherwise your history.
 function activityHtml(ctx, r) {
   if (ui.stage !== 'pick') return stageHtml(ctx, r);
@@ -280,9 +408,7 @@ function activityHtml(ctx, r) {
       ${list.length ? `<ul class="hist">${list.map((x) => `<li><div><b>${esc(name(x.chargerId))}</b><span class="muted">${esc(fmtTime(new Date(x.at)))} · ${x.kWh.toFixed(1)} kWh</span></div><b class="price">${rm(x.costRm)}</b></li>`).join('')}</ul>`
         : '<p class="muted">No sessions on this device yet.</p>'}
     </section>
-    <section class="about"><h3>About this demo</h3>
-      <p class="muted">${esc(source)}${mode ? ` · ${esc(mode)}` : ''}. Condo bays, occupancy and history are simulated; condo names are fictional.</p>
-      <div class="btn-row"><button class="btn" type="button" data-reset>Reset demo</button><a class="btn" href="jmb.html">Manage a condo? JMB portal</a></div></section>`;
+`;
 }
 
 function compute(ctx) {
@@ -306,6 +432,7 @@ function update(root, ctx) {
   const { car, origin, ranking, trip, place } = compute(ctx);
   const $ = (sel) => root.querySelector(sel);
   if ($('#d-batt-out')) $('#d-batt-out').textContent = `${ui.battery}%`;
+  if ($('#d-vspec')) $('#d-vspec').innerHTML = `<span class="chip off">${car.batteryKwh} kWh</span><span class="chip off">${esc(car.connectors.join(' · '))}</span>`;
   if ($('#d-arrive-out')) $('#d-arrive-out').textContent = `${ui.arriveMin}%`;
   last = { ranking, car };
   drawMarkers(root, ctx, origin, ranking, car);

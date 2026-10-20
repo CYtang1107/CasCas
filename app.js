@@ -13,10 +13,11 @@ import { renderJmb } from './views/jmb.js';
 const tabView = (name) => (root, ctx) => renderDriver(root, ctx, name);
 // Two front doors: index.html is the driver app, jmb.html the JMB portal (body data-app="jmb").
 const PORTAL = document.body.dataset.app === 'jmb';
-const VIEWS = PORTAL ? { jmb: renderJmb } : { home: tabView('home'), map: tabView('map'), plan: tabView('plan'), activity: tabView('activity') };
+const VIEWS = PORTAL ? { jmb: renderJmb } : { home: tabView('home'), map: tabView('map'), plan: tabView('plan'), activity: tabView('activity'), account: tabView('account') };
 let state = loadState();
 state.visitorPasses = purgePasses(state.visitorPasses, Date.now());
 saveState(state);
+document.documentElement.dataset.theme = state.profile.theme; // chosen in Account
 let clock = CLOCK_PRESETS[0].date();
 let chargers = null; // set once chargers are loaded
 let api = null; // set in shared mode (a CasCas server answered)
@@ -109,6 +110,7 @@ function initChrome() {
   });
   document.getElementById('reset').addEventListener('click', () => {
     state = resetState();
+    document.documentElement.dataset.theme = state.profile.theme;
     resetDriver();
     render();
   });

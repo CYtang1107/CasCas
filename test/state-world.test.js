@@ -8,7 +8,7 @@ import { barChart24, lineChart } from '../views/charts.js';
 const setStorage = (value) => Object.defineProperty(globalThis, 'localStorage', { value, configurable: true, writable: true });
 afterEach(() => setStorage(undefined));
 
-const BLANK = { checkins: {}, booking: null, sharing: {}, sessions: [], visitorPasses: [], anonNo: null, maintenance: {}, searchHistory: [], favourites: [] };
+const BLANK = { checkins: {}, booking: null, sharing: {}, sessions: [], visitorPasses: [], anonNo: null, maintenance: {}, searchHistory: [], favourites: [], profile: { name: '', carId: null, homeId: '', prefs: null, theme: 'light' } };
 
 test('review focus: corrupt storage falls back to blank state', () => {
   setStorage({ getItem: () => '{bad json', setItem() {}, removeItem() {} });
@@ -101,4 +101,15 @@ test('anonNumber is picked once per device and then stays the same', () => {
   const n = anonNumber(s, () => 0.5);
   assert.equal(n, 50);
   assert.equal(anonNumber(s, () => 0.1), 50);
+});
+
+test('the driver profile is cleaned: bad fields fall back, the name is trimmed and capped', () => {
+  setStorage({ getItem: () => JSON.stringify({ profile: { name: '  Chee Yang  '.repeat(5), carId: 'atto3', homeId: 7, theme: 'neon', prefs: { maxPrice: 1.2, fastOnly: 'yes', operator: 'Gentari' } } }), setItem() {}, removeItem() {} });
+  const p = loadState().profile;
+  assert.ok(p.name.length <= 40);
+  assert.equal(p.name.startsWith('Chee Yang'), true);
+  assert.equal(p.carId, 'atto3');
+  assert.equal(p.homeId, '');
+  assert.equal(p.theme, 'light');
+  assert.deepEqual(p.prefs, { maxPrice: 1.2, fastOnly: false, operator: 'Gentari' });
 });
