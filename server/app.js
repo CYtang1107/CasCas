@@ -15,6 +15,9 @@ import { createCsms } from './ocpp.js';
 import { createTomTom, parsePoints, parseBbox } from './tomtom.js';
 import { createProposal, castVote, tally, closeProposal } from '../engine/governance.js';
 import { createAuth } from './auth.js';
+import { createAgent } from './agent.js';
+import { CARS } from '../data/cars.js';
+import { START } from '../data/places.js';
 import { cleanSession, cleanBooking, cleanCheckin, cleanSharing } from './validate.js';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
@@ -44,13 +47,14 @@ function chargerSource({ dataDir, fetchFn, key, now }) {
   };
 }
 
-export function createApp({ dataDir, secret, pins, ocmKey = '', ocppPassword = crypto.randomBytes(16).toString('hex'), trafficKey = '', fetchFn = globalThis.fetch, now = () => Date.now() }) {
+export function createApp({ dataDir, secret, pins, ocmKey = '', ocppPassword = crypto.randomBytes(16).toString('hex'), trafficKey = '', ai = null, fetchFn = globalThis.fetch, now = () => Date.now() }) {
   const store = createStore(dataDir);
   const csms = createCsms({ store, condos: CONDOS, password: ocppPassword, now });
   const auth = createAuth({ secret, pins, now });
   const chargers = chargerSource({ dataDir, fetchFn, key: ocmKey, now });
   const app = express();
   app.disable('x-powered-by');
+  app.set('trust proxy', 1); // Render sits in front: rate limits need the real client address
   // OCPP chargers connect over WebSocket: call app.locals.attachOcpp(httpServer) after listen().
   app.locals.attachOcpp = (server) => csms.attach(server);
   app.locals.sim = null;
@@ -70,7 +74,31 @@ export function createApp({ dataDir, secret, pins, ocmKey = '', ocppPassword = c
   app.use('/api', express.json({ limit: '50kb' }));
 
   app.get('/api/health', (req, res) => res.json({ ok: true }));
-  app.get('/api/config', (req, res) => res.json({ traffic: !!trafficKey }));
+  app.get('/api/config', (req, res) => res.json({ traffic: !!trafficKey, ai: !!ai?.key }));
+
+  // The CasSama assistant: an orchestrator model calling CasSama's own engines as tools.
+  const agent = ai?.key ? createAgent({ ...ai, fetchFn, now }) : null;
+  app.post('/api/agent', async (req, res) => {
+    if (!agent) return bad(res, 'The AI assistant is not set up on this server', 404);
+    if (!agent.allow(req.ip || 'x')) return bad(res, 'Too many questions; try again in a few minutes', 429);
+    const b = req.body || {};
+    const text = String(b.text || '').slice(0, 2000);
+    const c = b.context || {};
+    const car = CARS.find((x) => x.id === c.carId) || CARS[0];
+    const lat = Number(c.lat), lng = Number(c.lng);
+    const origin = lat > 0.5 && lat < 7.5 && lng > 99 && lng < 120 ? { lat, lng, name: String(c.originName || 'your location').slice(0, 60) } : { ...START, name: 'KL East' };
+    const t = new Date(c.clock);
+    const clock = Number.isNaN(t.getTime()) ? new Date(now()) : t;
+    const home = CONDOS.find((x) => x.id === c.homeId) || null;
+    const history = Array.isArray(b.history) ? b.history.slice(-6) : [];
+    try {
+      const world = { chargers: (await chargers()).chargers, condos: CONDOS.map((x) => condoWithSharing(x.id)) };
+      const env = { world, car, origin, clock, homeId: home?.id || null, parkFor: c.parkFor, prefs: c.prefs || {} };
+      res.json(await agent.ask({ text, history, env, context: { clock, carName: car.name, originName: origin.name, homeName: home?.name } }));
+    } catch (e) {
+      bad(res, 'The AI assistant is unavailable right now', 502);
+    }
+  });
 
   // Live TomTom data (same key as the traffic tiles): bays, routes with traffic, incidents.
   const tt = trafficKey ? createTomTom({ key: trafficKey, fetchFn, now }) : null;

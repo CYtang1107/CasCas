@@ -1,0 +1,28 @@
+// CasSama's knowledge base for the AI assistant: short, checked facts about how CasSama works.
+// Every figure here matches the app's own settings and engines.
+export const KNOWLEDGE = [
+  { id: 'kb-ranking', title: 'How CasSama picks a charger',
+    text: 'CasSama ranks chargers from every operator by your battery. At 15% or less (Urgent) the quickest working charge comes first. Up to 50% (Balanced) it weighs price, time and reliability. Above 50% (Saver) cheaper and quieter chargers come first, and busy fast chargers are kept for drivers who need them. Chargers with many problem reports are never recommended. Your budget, fast-DC-only setting and preferred operator are applied on top.' },
+  { id: 'kb-sharing', title: 'Condo bay sharing',
+    text: 'A condo JMB can open its idle charging bays to outside drivers. Residents always come first: the JMB keeps a set number of bays for residents, and residents already charging are never displaced. Visitors book through CasSama, enter their number plate, and are approved automatically while the condo is sharing.' },
+  { id: 'kb-auto', title: 'Auto-share',
+    text: 'In Auto mode a condo shares bays whenever residents are not expected to need them, only between 7 AM and 10 PM. CasSama plans for 10% more residents than expected and keeps the chosen bays spare on top, so a busy evening never runs short. On a typical weekday this means about 7 AM to 5 PM.' },
+  { id: 'kb-vote', title: 'Residents vote on sharing',
+    text: 'Any change to a condo\'s sharing settings is a proposal that residents vote on in the CasSama app for 7 days. It passes with more yes than no votes and at least 10% of units voting, and only then takes effect. The JMB can pause sharing immediately for safety. Votes are anonymous; only totals are shown. This is a prototype rule; a real pilot follows the condo\'s by-laws and the Strata Management Act.' },
+  { id: 'kb-income', title: 'Where charging income goes',
+    text: 'Charging receipts first pay TNB electricity, RM0.05 per kWh of other variable costs, fixed costs of RM125 per bay per month, and any repairs logged by the JMB. The operating surplus is split 70% to the JMB maintenance fund and 30% to the charging partner. Residents see this in their monthly statement as a saving off the maintenance fee.' },
+  { id: 'kb-tariff', title: 'TNB time-of-use tariff',
+    text: 'TNB domestic time-of-use: peak hours are weekdays 2 PM to 10 PM at 28.52 sen per kWh; all other hours are off-peak at 24.43 sen per kWh (before AFA). Condo resident and visitor prices add a peak surcharge of RM0.10 per kWh during TNB peak hours.' },
+  { id: 'kb-prices', title: 'Public charging prices used',
+    text: 'Public rates in the prototype: Gentari AC RM1.00 and DC RM1.30 per kWh, ChargEV AC RM0.90 and DC RM1.30, JomCharge AC RM1.10 and DC RM1.30, Tesla Supercharger RM1.80. Unknown operators show an estimate. Condo residents pay RM0.90 per kWh and visitors usually RM1.10, set by each JMB. Gentari gives 15% off DC fast charging from midnight to 7 AM.' },
+  { id: 'kb-overstay', title: 'Slots and overstay fees',
+    text: 'A booking holds the bay for 15 minutes. Your slot ends at a set time; after that the overstay fee is RM1 per started 10 minutes, paid to the condo, so the next driver can charge. CasSama reminds you 15 minutes before your slot ends.' },
+  { id: 'kb-trip', title: 'Long trips',
+    text: 'For long trips CasSama plans fast DC stops and charges only what the next leg needs, never past 80% where DC charging slows down, and never planning to reach a charger with less than 10%. Highway chargers in the prototype are demo sites. Routes and times come from real roads (OpenStreetMap routing or TomTom with live traffic).' },
+  { id: 'kb-privacy', title: 'Privacy',
+    text: 'Bookings are logged under an anonymous ID such as Visitor #48. A visitor\'s number plate is shown only to that condo\'s management behind its PIN and deleted 30 days after the visit. Your name, car and saved chargers stay on your device. Route points sent to routing services are rounded to about 100 metres. CasSama never takes card details or payments in this prototype.' },
+  { id: 'kb-ocpp', title: 'Live chargers and load limit',
+    text: 'Condo chargers talk to CasSama over OCPP 1.6. A charger that reports a fault is logged in the maintenance log and taken out of service for drivers. When many bays charge at once, CasSama lowers each bay\'s power so the condo stays inside its safe electrical limit, assumed at 60% of nameplate until an electrical assessment sets it.' },
+  { id: 'kb-co2', title: 'CO2 saved',
+    text: 'CasSama estimates CO2 avoided by comparing an EV using 0.15 kWh per km on the Peninsular grid (0.74 kg CO2 per kWh) with a petrol car at 0.16 kg CO2 per km.' },
+];

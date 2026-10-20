@@ -26,6 +26,8 @@ import { TRIP_PLACES, HIGHWAY_CHARGERS } from '../data/trips.js';
 import { normalisePlate, isValidPlate, formatPlate, canAutoApprove, createPass } from '../engine/access.js';
 import { addSession, anonNumber } from '../state.js';
 import { esc, rm, rm0, fmtTime, fmtClock } from './format.js';
+import { aiAvailable, aiOn, chat, chatHtml, sendChat, chatAction } from './chat.js';
+import { notify, notifyState, askPermission } from './notify.js';
 
 const PARK_OPTIONS = [['30m', '30 min'], ['2h', '2 h'], ['4h', '4 h'], ['overnight', 'Overnight']];
 const BUDGETS = [['', 'Any price'], ['0.9', 'Up to RM0.90/kWh'], ['1', 'Up to RM1.00/kWh'], ['1.2', 'Up to RM1.20/kWh'], ['1.5', 'Up to RM1.50/kWh']];
@@ -169,7 +171,7 @@ export function renderDriver(root, ctx, which = 'home') {
   const { condos } = ctx.world;
   const askForm = (big) => `<form id="d-ask" class="ask ${big ? 'big' : ''}" role="search" novalidate>
         <label class="search"><span class="sr-only">Ask CasSama</span>${IC.search}
-          <input id="d-ask-text" type="search" maxlength="200" autocomplete="off" enterkeyhint="go" placeholder="Ask CasSama: “Atto 3 at 71%, going to Melaka”" value="${esc(ui.ask)}"></label>
+          <input id="d-ask-text" type="search" maxlength="200" autocomplete="off" enterkeyhint="go" placeholder="${big && aiOn() ? 'Ask CasSama anything: “cheapest charge at 20%?”' : 'Ask CasSama: “Atto 3 at 71%, going to Melaka”'}" value="${esc(ui.ask)}"></label>
         <button class="btn primary" type="submit">Go</button>
       </form>
       ${ui.askNote ? `<p class="ask-note" role="status">${esc(ui.askNote)}</p>` : ''}`;
@@ -195,6 +197,7 @@ export function renderDriver(root, ctx, which = 'home') {
         <p class="eyebrow">${esc(greeting(ctx.clock))} · ${esc(fmtTime(ctx.clock))}</p>
         <h2>Where are you charging today?</h2>
         ${askForm(true)}
+        <div id="d-chat">${chatHtml()}</div>
       </section>
       <nav class="quick" aria-label="Shortcuts">
         <a href="#plan" data-quick="trip">${IC.route}<span>Plan a trip</span></a>
@@ -262,6 +265,7 @@ export function renderDriver(root, ctx, which = 'home') {
   root.querySelector('[data-sopen]')?.addEventListener('click', () => openSearch(root, ctx));
   if (which === 'map' && search.open) openSearch(root, ctx);
   $('#d-ask')?.addEventListener('submit', (e) => { e.preventDefault(); ask(root, ctx, $('#d-ask-text').value); });
+  bindChat(root, ctx);
   root.querySelectorAll('[data-quick]').forEach((a) => a.addEventListener('click', () => {
     if (a.dataset.quick === 'fast') ui.prefs.fastOnly = true;
     if (a.dataset.quick === 'trip' && !placeOf(ui.placeId).trip) ui.placeId = 'melaka';
@@ -333,6 +337,7 @@ function homeHtml(r, ctx, trip, place) {
   }
   const myCondo = ctx.world.condos.find((c) => c.id === ui.homeId);
   const v = myCondo ? proposalFor(ctx, myCondo) : null;
+  if (v?.proposal?.status === 'open' && !v.myVote) notify(ctx.state.profile, `vote-${myCondo.id}-${v.proposal.id || v.proposal.openedAt || ''}`, `CasSama: vote at ${myCondo.name}`, `${describeSharing(v.proposal.settings).split('.')[0]}. Vote in the app within 7 days.`);
   const voteBanner = v?.proposal?.status === 'open' && !v.myVote
     ? `<a class="banner vote" href="#account">${IC.help}<span><b>Vote on bay sharing</b> at ${esc(myCondo.name)}: ${esc(describeSharing(v.proposal.settings).split('.')[0])}</span><span aria-hidden="true">›</span></a>` : '';
   return active + voteBanner + flash + `<section class="home-pick">${head}${main}</section>`
@@ -415,6 +420,7 @@ function accountHtml(ctx) {
     </div>
     <h3 class="agroup">General</h3>
     <div class="alist">
+      <label class="arow">${IC.clock}<span>Notifications <small class="muted">${esc(notifyNote(p))}</small></span><input type="checkbox" class="switch" id="a-notify" ${p.notify && notifyState() === 'granted' ? 'checked' : ''} ${notifyState() === 'unsupported' ? 'disabled' : ''}></label>
       <label class="arow">${IC.sun}<span>Dark theme</span><input type="checkbox" class="switch" id="a-theme" ${p.theme === 'dark' ? 'checked' : ''}></label>
       ${row('help', 'Help and FAQ', '', 'data-a="faq"')}
       ${row('shield', 'Privacy', '', 'data-a="privacy"')}
@@ -468,6 +474,13 @@ function condoHtml(ctx, condo) {
     </section>`;
 }
 
+function notifyNote(p) {
+  const s = notifyState();
+  if (s === 'unsupported') return '· not supported in this browser';
+  if (s === 'denied') return '· blocked in browser settings';
+  return p.notify && s === 'granted' ? '· charge done, slot ending, new votes' : '· off';
+}
+
 function saveProfile(ctx, patch) {
   ctx.state.profile = { ...ctx.state.profile, ...patch };
   ctx.save();
@@ -484,6 +497,11 @@ function bindAccount(root, ctx) {
   $('#a-budget').addEventListener('change', (e) => { ui.prefs.maxPrice = e.target.value ? Number(e.target.value) : null; prefs(); });
   $('#a-fast').addEventListener('change', (e) => { ui.prefs.fastOnly = e.target.checked; prefs(); });
   $('#a-op').addEventListener('change', (e) => { ui.prefs.operator = e.target.value || null; prefs(); });
+  $('#a-notify').addEventListener('change', async (e) => {
+    const ok = e.target.checked && (await askPermission()) === 'granted';
+    saveProfile(ctx, { notify: ok });
+    redraw();
+  });
   $('#a-theme').addEventListener('change', (e) => {
     const theme = e.target.checked ? 'dark' : 'light';
     document.documentElement.dataset.theme = theme;
@@ -574,6 +592,7 @@ function hasPrefs() {
 
 // Apply what Ask CasSama understood, then redraw the page so every field shows it.
 function ask(root, ctx, text) {
+  if (tab === 'home' && aiOn()) { askAi(root, ctx, text); return; }
   ui.ask = text;
   const { set, understood } = parseRequest(text, { cars: CARS, places: ALL_PLACES });
   if (set.arriveMin != null) ui.arriveMin = set.arriveMin;
@@ -591,6 +610,37 @@ function ask(root, ctx, text) {
   if (location.hash !== '#plan') location.hash = '#plan';
   else renderDriver(root, ctx, 'plan');
 }
+
+// With an AI key on the server, Home's Ask CasSama is a conversation with the agents.
+function askAi(root, ctx, text) {
+  const t = text.trim();
+  if (!t || chat.busy) return;
+  ui.ask = '';
+  const input = root.querySelector('#d-ask-text');
+  if (input) input.value = '';
+  const o = originPoint();
+  const r3 = (n) => Math.round(n * 1000) / 1000;
+  const context = { carId: ui.carId, lat: r3(o.lat), lng: r3(o.lng), originName: o.name, clock: ctx.clock.toISOString(), homeId: ui.homeId || null, parkFor: ui.parkFor, prefs: ui.prefs };
+  const draw = () => { const el = current?.root.querySelector('#d-chat'); if (el) { el.innerHTML = chatHtml(); bindChat(current.root, current.ctx); } };
+  sendChat(t, context, draw);
+}
+
+function bindChat(root) {
+  root.querySelector('[data-chat-clear]')?.addEventListener('click', () => { chat.messages = []; const el = root.querySelector('#d-chat'); if (el) el.innerHTML = ''; });
+  root.querySelectorAll('[data-chat-act]').forEach((b) => b.addEventListener('click', () => {
+    const a = chatAction(b.dataset.chatAct);
+    if (!a) return;
+    if (a.type === 'book') { ui.selected = a.chargerId; location.hash = '#map'; return; }
+    if (a.car_id) ui.carId = a.car_id;
+    if (a.battery_pct != null) ui.battery = a.battery_pct;
+    if (a.place_id) ui.placeId = a.place_id;
+    if (a.park_for) ui.parkFor = a.park_for;
+    if (a.arrive_min_pct != null) ui.arriveMin = a.arrive_min_pct;
+    if (ui.stage === 'plate') ui.stage = 'pick';
+    location.hash = '#plan';
+  }));
+}
+aiAvailable().then((on) => { if (on && tab === 'home' && current) renderDriver(current.root, current.ctx, 'home'); });
 
 // ---- From / To: type a place, pick a suggestion, or use your location ----
 let suggestTimer = null;
@@ -1078,7 +1128,13 @@ function startTimer() {
     if (!p || ui.stage !== 'charging') { stopTimer(); return; }
     p.session.minutes += 1;
     p.session.kWh = Math.min(p.kWhTarget, p.session.kWh + p.power / 60);
-    if (p.session.kWh >= p.kWhTarget) { stopTimer(); ui.stage = 'done'; }
+    const profile = current?.ctx.state.profile;
+    const nowSim = p.bookedAt + p.session.minutes * 60000;
+    if (p.slotEnd && p.slotEnd - nowSim <= 15 * 60000) notify(profile, `slot-${p.bookedAt}`, 'CasSama: 15 minutes left', `Your charging slot ends at ${fmtClock(new Date(p.slotEnd))}. After that it is ${rm(CONST.overstayRmPer10Min)} per 10 min.`);
+    if (p.session.kWh >= p.kWhTarget) {
+      stopTimer(); ui.stage = 'done';
+      notify(profile, `done-${p.bookedAt}`, 'CasSama: charging complete', `${p.session.kWh.toFixed(1)} kWh added. Please move your car by ${fmtClock(new Date(p.slotEnd))}.`);
+    }
     if (current?.root.querySelector('#d-activity')) update(current.root, current.ctx);
   }, 1000);
 }

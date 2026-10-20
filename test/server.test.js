@@ -175,7 +175,7 @@ test('the JMB portal has its own page; the driver app no longer has a JMB tab', 
 
 test('traffic tiles: off without a key; with one, proxied and the key never reaches the browser', async () => {
   const off = await start();
-  assert.deepEqual((await off.call('GET', '/api/config')).body, { traffic: false });
+  assert.deepEqual((await off.call('GET', '/api/config')).body, { traffic: false, ai: false });
   assert.equal((await off.raw('GET', '/api/traffic/12/3245/2010.png')).status, 404);
   await off.close();
   const seen = [];
@@ -184,7 +184,7 @@ test('traffic tiles: off without a key; with one, proxied and the key never reac
     fetchFn: async (url) => { seen.push(String(url)); return { ok: true, status: 200, arrayBuffer: async () => png }; } });
   const server = await new Promise((r) => { const s = app.listen(0, () => r(s)); });
   const base = `http://127.0.0.1:${server.address().port}`;
-  assert.deepEqual(await (await fetch(`${base}/api/config`)).json(), { traffic: true });
+  assert.deepEqual(await (await fetch(`${base}/api/config`)).json(), { traffic: true, ai: false });
   const tile = await fetch(`${base}/api/traffic/12/3245/2010.png`);
   assert.equal(tile.status, 200);
   assert.equal(tile.headers.get('content-type'), 'image/png');

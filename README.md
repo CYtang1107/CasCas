@@ -17,6 +17,8 @@ A condo's own portal link: add its id, e.g. `jmb.html#lumina`. Bookings made in 
 
 - **Driver:** battery-aware picks across every provider around KL East. Low battery gets the nearest working charger; high battery gets cheaper, quieter ones, with demand balancing that keeps busy fast chargers free for drivers who need them. Every booking records (anonymously) whether the driver took a CasSama pick and what it saved vs the nearest charger.
 - **Ask CasSama:** type a trip in plain English ("Atto 3 at 20%, going to KL East Mall for 2 hours, under RM1.20, prefer Gentari") and the form fills itself. Rule-based, so it works offline and never guesses.
+- **CasSama AI agents** (when the server has an AI key): Ask CasSama on Home becomes a conversation. An orchestrator model calls CasSama's own engines as agents (Recommendation, Journey planning, Booking, Cost estimation, Revenue) and a knowledge base of checked facts (`data/knowledge.js`, BM25 search). Guardrails: card numbers, passwords and PINs are refused before reaching the model; every RM amount in a reply must come from an agent's result, or the answer is corrected or the amount removed; the assistant can only *propose* a booking, the driver taps to confirm. Each reply shows which agents worked on it and which facts it used.
+- **Notifications** (Account → Notifications, opt-in): charge complete, 15 minutes before your slot ends, and a new sharing vote at your condo.
 - **Long trips:** pick a longer trip (Seremban, Port Dickson, Melaka, Ipoh, Johor Bahru, Penang) or ask "Atto 3 at 71%, going to Melaka, arrive with 23%". The plan shows start battery, each leg, every fast-charging stop (arrive % → leave %, minutes, kWh, cost) and the battery on arrival, on the map too, with Google Maps directions. It charges only what the next leg needs and never past 80%, so stops stay short. Highway chargers are demo data.
 - **From / To:** type any start or destination in Malaysia (our places first, then [Photon](https://photon.komoot.io) OpenStreetMap search) or tap the location button to start from your GPS position, which never leaves the phone. Destinations over about 40 km become a long trip automatically.
 - **Real roads and traffic:** routes come from [OSRM](https://project-osrm.org) (OpenStreetMap routing): the blue road line on the map with its time, an alternative route, turn-by-turn steps, and trip plans re-checked against real road distances. Times are for free-flowing roads, so a typical-traffic estimate for the hour is shown beside them (not live). Live traffic colours come from TomTom when the server has `TOMTOM_KEY`; the server fetches the tiles so the key stays hidden.
@@ -80,6 +82,8 @@ Live TomTom data: get a free key at developer.tomtom.com (My Dashboard → Keys)
 - **Live traffic** colours on the map.
 
 Answers are cached (stations 6 h, bays 5 min, routes 3 min, incidents 5 min) to stay inside the free daily allowance.
+
+AI agents: set `DASHSCOPE_API_KEY` (or `AI_API_KEY`) in Render → Environment. Defaults are Qwen through DashScope's OpenAI-compatible API (`AI_BASE_URL`, default `https://dashscope-intl.aliyuncs.com/compatible-mode/v1`) with `qwen-plus-latest`, falling back to `qwen-flash` (`AI_MODELS`, comma-separated). Any OpenAI-compatible endpoint works. Limits: 20 questions per visitor per 10 minutes and 1,500 a day. Without a key, Ask CasSama stays rule-based.
 
 OCPP: real chargers would use `OCPP_PASSWORD` (set it in Render). Without it, only the built-in simulator can connect. `OCPP_SIM=0` turns the simulated chargers off.
 

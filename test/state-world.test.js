@@ -8,7 +8,7 @@ import { barChart24, lineChart } from '../views/charts.js';
 const setStorage = (value) => Object.defineProperty(globalThis, 'localStorage', { value, configurable: true, writable: true });
 afterEach(() => setStorage(undefined));
 
-const BLANK = { checkins: {}, booking: null, sharing: {}, sessions: [], visitorPasses: [], anonNo: null, maintenance: {}, searchHistory: [], favourites: [], profile: { name: '', carId: null, homeId: '', prefs: null, theme: 'light' }, proposals: {}, voterId: '', myVotes: {} };
+const BLANK = { checkins: {}, booking: null, sharing: {}, sessions: [], visitorPasses: [], anonNo: null, maintenance: {}, searchHistory: [], favourites: [], profile: { name: '', carId: null, homeId: '', prefs: null, theme: 'light', notify: false }, proposals: {}, voterId: '', myVotes: {} };
 
 test('review focus: corrupt storage falls back to blank state', () => {
   setStorage({ getItem: () => '{bad json', setItem() {}, removeItem() {} });
@@ -111,5 +111,6 @@ test('the driver profile is cleaned: bad fields fall back, the name is trimmed a
   assert.equal(p.carId, 'atto3');
   assert.equal(p.homeId, '');
   assert.equal(p.theme, 'light');
+  assert.equal(p.notify, false);
   assert.deepEqual(p.prefs, { maxPrice: 1.2, fastOnly: false, operator: 'Gentari' });
 });

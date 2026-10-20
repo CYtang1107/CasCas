@@ -2,7 +2,7 @@
 const KEY = 'cascas.v1'; // the app was called CasCas; the key keeps that name so saved data survives
 export const MAX_SESSIONS = 500;
 // The driver's own settings on this device (no accounts in the prototype).
-const blankProfile = () => ({ name: '', carId: null, homeId: '', prefs: null, theme: 'light' });
+const blankProfile = () => ({ name: '', carId: null, homeId: '', prefs: null, theme: 'light', notify: false });
 const blank = () => ({ checkins: {}, booking: null, sharing: {}, sessions: [], visitorPasses: [], anonNo: null, maintenance: {}, searchHistory: [], favourites: [], profile: blankProfile(), proposals: {}, voterId: '', myVotes: {} });
 let memory = blank();
 
@@ -33,7 +33,7 @@ function clean(parsed) {
     const str = (v, max) => (typeof v === 'string' ? v.trim().slice(0, max) : '');
     s.profile = {
       name: str(p.name, 40), carId: typeof p.carId === 'string' ? p.carId : null, homeId: str(p.homeId, 40),
-      theme: p.theme === 'dark' ? 'dark' : 'light',
+      theme: p.theme === 'dark' ? 'dark' : 'light', notify: p.notify === true,
       prefs: isObject(p.prefs) ? {
         maxPrice: typeof p.prefs.maxPrice === 'number' && p.prefs.maxPrice > 0 ? p.prefs.maxPrice : null,
         fastOnly: p.prefs.fastOnly === true,

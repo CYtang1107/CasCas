@@ -21,6 +21,12 @@ const app = createApp({
   ocmKey: process.env.OCM_KEY || '',
   ocppPassword,
   trafficKey: process.env.TOMTOM_KEY || '',
+  // Same OpenAI-compatible key as VO-AI (DashScope / Qwen). Without one, Ask CasSama uses its rule-based parser.
+  ai: {
+    key: process.env.AI_API_KEY || process.env.DASHSCOPE_API_KEY || '',
+    baseUrl: process.env.AI_BASE_URL || undefined,
+    models: process.env.AI_MODELS ? process.env.AI_MODELS.split(',').map((m) => m.trim()).filter(Boolean) : undefined,
+  },
 });
 
 const port = Number(process.env.PORT) || 4300;
