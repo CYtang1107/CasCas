@@ -687,6 +687,8 @@ select.bare.big { font-size: 1.1rem; font-weight: 700; }
 .chat .steps { margin-top: 6px; font-size: 0.78rem; color: var(--muted); }
 .chat .steps summary { cursor: pointer; }
 .chat .steps ol { margin: 4px 0 0; padding-left: 18px; }
+#d-chat, .chat, .chat .msgs, .chat .msg, .acard, .acard .cmain { min-width: 0; max-width: 100%; }
+.chat .msg { overflow-wrap: anywhere; }
 .chat-foot { margin: 8px 0 0; font-size: 0.75rem; }
 .linkish { background: none; border: 0; padding: 0; color: var(--accent); text-decoration: underline; cursor: pointer; font: inherit; }
 .chat .rich p { margin: 0 0 6px; } .chat .rich p:last-child { margin: 0; }
