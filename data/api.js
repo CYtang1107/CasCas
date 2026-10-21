@@ -34,11 +34,15 @@ export function createApi({ base = '', fetchFn = (...a) => globalThis.fetch(...a
     chargers: () => call(fetchFn, 'GET', u('chargers')),
     world: (at) => call(fetchFn, 'GET', u(`world?at=${Number(at)}`)),
     book: (body) => call(fetchFn, 'POST', u('bookings'), body),
+    bookingCheckIn: (bookingId, cancelToken, bay) => call(fetchFn, 'POST', u(`bookings/${id(bookingId)}/check-in`), { cancelToken, bay }),
+    bookingChargingStatus: (bookingId, cancelToken) => call(fetchFn, 'POST', u(`bookings/${id(bookingId)}/charging-status`), { cancelToken }),
     cancel: (bookingId, cancelToken) => call(fetchFn, 'DELETE', u(`bookings/${id(bookingId)}`), { cancelToken }),
     checkin: (body) => call(fetchFn, 'POST', u('checkins'), body),
     summary: (condoId) => call(fetchFn, 'GET', u(`condos/${id(condoId)}/summary`)),
     login: (condoId, pin) => call(fetchFn, 'POST', u('jmb/login'), { condoId, pin }),
     jmb: (condoId, token) => call(fetchFn, 'GET', u(`jmb/${id(condoId)}`), undefined, token),
+    jmbChargingRevenue: (condoId, token, month) => call(fetchFn, 'GET',
+      u(`jmb/${id(condoId)}/charging-revenue?month=${id(month)}`), undefined, token),
     issueResidentKey: (condoId, token) =>
     call(
       fetchFn,

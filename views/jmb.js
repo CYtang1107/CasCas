@@ -12,6 +12,7 @@ import { recoveryHtml, quietHtml, maintenanceHtml, bindMaintenance, reportCsv, d
 import { bayStatus, maintenanceCost } from '../engine/maintenance.js';
 import { filterSessions } from '../engine/insights.js';
 import { renderCpo } from './cpo.js';
+import { recordedRevenueHtml, bindRecordedRevenue } from './jmb-recorded.js';
 
 let condoId = null;
 const PEAK_HOURS = Array.from({ length: TNB.peakEndHour - TNB.peakStartHour }, (_, i) => TNB.peakStartHour + i);
@@ -53,7 +54,7 @@ export function renderJmb(root, ctx) {
   const problems = checkins.filter((c) => !c.ok);
 
   const bays = entries ? bayStatus(entries, condo.bays) : null;
-  const SECTIONS = [['j-s-overview', 'Overview'], ['j-s-sharing', 'Sharing'], ['j-s-money', 'Cost recovery'], ['j-s-live', 'Live chargers'], ['j-s-health', 'Charger health'], ['j-s-private', 'Visitors & drivers']];
+  const SECTIONS = [['j-s-overview', 'Forecast'], ['j-s-recorded', 'Recorded revenue'], ['j-s-sharing', 'Sharing'], ['j-s-money', 'Cost recovery'], ['j-s-live', 'Live chargers'], ['j-s-health', 'Charger health'], ['j-s-private', 'Visitors & drivers']];
   root.innerHTML = `
   <div class="portal">
   <nav class="side" aria-label="Dashboard sections">${SECTIONS.map(([id, l]) => `<button type="button" data-jump="${id}">${l}</button>`).join('')}</nav>
@@ -66,12 +67,14 @@ export function renderJmb(root, ctx) {
     </div>
 
     <div class="kpis" id="j-s-overview">
-      <div class="kpi"><span>Charging income this month</span><b>${rm0(sim.revenue)}</b></div>
-      <div class="kpi"><span>JMB share after all costs</span><b>${rm0(sim.jmbIncome)}</b></div>
-      <div class="kpi hero"><span>Saving per unit per month</span><b>${rm(sim.perUnitSaving)}</b></div>
-      <div class="kpi"><span>Energy delivered</span><b>${num(sim.kWhSold)} kWh</b></div>
+      <div class="kpi"><span>Forecast charging receipts</span><b>${rm0(sim.revenue)}</b></div>
+      <div class="kpi"><span>Forecast JMB allocation</span><b>${rm0(sim.jmbIncome)}</b></div>
+      <div class="kpi hero"><span>Illustrative per-unit relief</span><b>${rm(sim.perUnitSaving)}</b></div>
+      <div class="kpi"><span>Forecast energy delivered</span><b>${num(sim.kWhSold)} kWh</b></div>
     </div>
 
+    <p class="muted">Forecast / simulated performance based on scenario assumptions; not measured receipts or guaranteed maintenance-fee savings.</p>
+    ${recordedRevenueHtml(ctx.api, condo.id)}
     <div class="grid2">
       <section class="card"><h3>An average day: who charges when</h3>
         ${barChart24({ a: sim.residentByHour, b: sim.visitorByHour, shade: PEAK_HOURS, aLabel: 'Residents', bLabel: 'Outside drivers (shared bays)' })}
@@ -93,7 +96,7 @@ export function renderJmb(root, ctx) {
         <p>Or add it to the sinking fund: <b>+${rm0(sim.jmbIncome * 12)} a year</b>, ${pct(boost)} on top of owners' contributions of ${rm0(sinkingYear)}.</p>
         <div class="bar" role="img" aria-label="Sinking fund boost ${pct(boost)}"><span style="width:${Math.min(100, boost * 100)}%"></span></div>
         <p class="muted">Hardware payback on ${condo.bays} bays at ${rm0(CONST.hardwarePerBay)} each: ${sim.paybackMonths ? `${sim.paybackMonths} months` : 'not reached at these prices'}. CO₂ avoided: ${num(sim.co2AvoidedKg)} kg this month.</p>
-        <button id="j-report" class="btn small" type="button">Download monthly report (CSV)</button>
+        <button id="j-report" class="btn small" type="button">Download forecast scenario (CSV)</button>
       </section>
       <section class="card" id="j-s-sharing"><h3>Sharing with outside drivers</h3>
         <p class="inforce"><span class="chip ${s.enabled ? 'on' : 'off'}">${s.enabled ? 'In force' : 'Paused'}</span> ${esc(describeSharing({ ...s, enabled: true }))}</p>
@@ -234,6 +237,7 @@ export function renderJmb(root, ctx) {
     });
   bindMaintenance(root, condo, ctx, priv.addMaintenance);
   bindLive(root, condo, ctx);
+  bindRecordedRevenue(root, ctx, condo.id, token);
   $('#j-report').addEventListener('click', () => {
     const sessions = priv.sessions ? filterSessions(priv.sessions, { from: start.getTime(), to: monthEnd }).length : 'n/a (log in)';
     const month = start.toLocaleString('en-MY', { month: 'long', year: 'numeric' });
