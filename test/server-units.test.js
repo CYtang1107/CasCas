@@ -12,7 +12,7 @@ const DAY = 864e5;
 test('store starts empty, saves atomically and reloads', () => {
   const dir = tmp();
   const a = createStore(dir);
-  assert.deepEqual(a.data, { sharing: {}, checkins: {}, maintenance: {}, proposals: {}, residentKeys: {}, sessions: [], passes: [], bookings: [] });
+  assert.deepEqual(a.data, { sharing: {}, checkins: {}, maintenance: {}, proposals: {}, residentKeys: {}, sessions: [], passes: [], bookings: [], chargingSessions: [] });
   a.data.sessions.push({ at: 1 });
   a.save();
   assert.ok(!fs.existsSync(path.join(dir, 'store.json.tmp')));

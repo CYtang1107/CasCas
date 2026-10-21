@@ -9,7 +9,8 @@ import { loadChargers } from '../data/ocm.js';
 import { normalisePlate, isValidPlate, canAutoApprove, createPass } from '../engine/access.js';
 import { validateSharing } from '../engine/sharing.js';
 import { followRate, savings, overstayTotals } from '../engine/insights.js';
-import { validateEntry, cleanEntry, faultBays } from '../engine/maintenance.js';
+import { validateEntry, cleanEntry, faultBays, bayStatus } from '../engine/maintenance.js';
+import { chargingRevenueReport, malaysiaMonth } from '../engine/charging.js';
 import { createStore } from './store.js';
 import { createCsms } from './ocpp.js';
 import { createTomTom, parsePoints, parseBbox } from './tomtom.js';
@@ -50,6 +51,17 @@ function chargerSource({ dataDir, fetchFn, key, now }) {
 
 export function createApp({ dataDir, secret, pins, ocmKey = '', ocppPassword = crypto.randomBytes(16).toString('hex'), trafficKey = '', ai = null, fetchFn = globalThis.fetch, now = () => Date.now() }) {
   const store = createStore(dataDir);
+  // The OCPP transaction context is held in the charger connection. After a
+  // server restart, an interrupted session must be reviewed, not auto-billed.
+  let interrupted = false;
+  for (const session of store.data.chargingSessions) {
+    if (session.status === 'charging') {
+      session.status = 'needs_review';
+      session.reviewReason = 'Server restarted before verified StopTransaction';
+      interrupted = true;
+    }
+  }
+  if (interrupted) store.save();
   const csms = createCsms({ store, condos: CONDOS, password: ocppPassword, now });
   const auth = createAuth({ secret, pins, now });
   const keyHash = (key) =>
@@ -307,6 +319,74 @@ export function createApp({ dataDir, secret, pins, ocmKey = '', ocppPassword = c
     res.status(201).json({ bookingId: id, cancelToken, pass });
   });
 
+  // Booking -> physical bay check-in -> OCPP transaction. The cancel token is a
+  // pilot bearer credential: never include it in the public world/JMB summary.
+  const ownedBooking = (req, res) => {
+    const booking = store.data.bookings.find(b => b.id === req.params.id);
+    if (!booking) { bad(res, 'Booking not found', 404); return null; }
+    const given = Buffer.from(String(req.body?.cancelToken || ''));
+    const real = Buffer.from(booking.cancelToken);
+    if (given.length !== real.length || !crypto.timingSafeEqual(given, real)) {
+      bad(res, 'Not your booking', 403);
+      return null;
+    }
+    return booking;
+  };
+
+  app.post('/api/bookings/:id/check-in', (req, res) => {
+    const booking = ownedBooking(req, res);
+    if (!booking) return;
+    const condo = condoWithSharing(booking.condoId);
+    if (!condo) return bad(res, 'Check-in requires a residential charger', 409);
+    const at = now();
+    if (at < booking.start || at >= booking.end) return bad(res, 'Check-in is only allowed during the booked interval', 409);
+    const bay = req.body?.bay;
+    if (!Number.isInteger(bay) || bay < 1 || bay > condo.bays) return bad(res, 'Choose a valid bay');
+    if (bayStatus(store.data.maintenance[condo.id] || [], condo.bays)[bay - 1]?.status === 'fault')
+      return bad(res, 'This bay is out of service', 409);
+    const point = csms.points.get(`${condo.id}-${bay}`);
+    if (!point || point.status !== 'Available' || point.txId !== null)
+      return bad(res, 'This charger is not currently available', 409);
+    if (store.data.chargingSessions.some(s => s.bookingId === booking.id))
+      return bad(res, 'This booking has already been checked in', 409);
+    if (store.data.chargingSessions.some(s => s.condoId === condo.id && s.bay === bay &&
+      (s.status === 'charging' || (s.status === 'awaiting_charge' && s.bookingEnd > at))))
+      return bad(res, 'This bay is assigned to another charging session', 409);
+    // OCPP idTag has a 20-character limit. Bind it to one booking and one bay.
+    const idTag = `CS${crypto.randomBytes(8).toString('hex')}`;
+    const record = {
+      id: crypto.randomUUID(), bookingId: booking.id, condoId: condo.id, chargerId: booking.chargerId,
+      role: booking.role, bay, status: 'awaiting_charge', bookingStart: booking.start,
+      bookingEnd: booking.end, checkedInAt: at, tagHash: crypto.createHash('sha256').update(idTag).digest('hex'),
+    };
+    store.data.chargingSessions.push(record);
+    store.save();
+    // The frontend may show this tag to the resident or compatible charger.
+    // The code does NOT remotely start a charger; charging must be initiated at the device.
+    return res.status(201).json({ sessionId: record.id, bay, status: record.status, idTag });
+  });
+
+  app.post('/api/bookings/:id/charging-status', (req, res) => {
+    const booking = ownedBooking(req, res);
+    if (!booking) return;
+    const s = store.data.chargingSessions.find(x => x.bookingId === booking.id);
+    if (!s) return res.json({ status: 'not_checked_in' });
+    const { id, bay, status, checkedInAt, startedAt, endedAt, energyKwh, revenueRm, reviewReason } = s;
+    return res.json({ id, bay, status, checkedInAt, startedAt, endedAt, energyKwh, revenueRm, reviewReason });
+  });
+
+  app.get('/api/jmb/:condoId/charging-revenue', requireJmb, (req, res) => {
+    const condo = condoWithSharing(req.params.condoId);
+    if (!condo) return bad(res, 'Unknown condo', 404);
+    const month = typeof req.query.month === 'string' ? req.query.month : malaysiaMonth(now());
+    const report = chargingRevenueReport({
+      sessions: store.data.chargingSessions, condo,
+      maintenance: store.data.maintenance[condo.id] || [], month,
+    });
+    if (!report) return bad(res, 'Month must be YYYY-MM');
+    return res.json(report);
+  });
+
   app.delete('/api/bookings/:id', (req, res) => {
     const d = store.data;
     const b = d.bookings.find((x) => x.id === req.params.id);
@@ -314,6 +394,10 @@ export function createApp({ dataDir, secret, pins, ocmKey = '', ocppPassword = c
     const given = Buffer.from(String(req.body?.cancelToken || ''));
     const real = Buffer.from(b.cancelToken);
     if (given.length !== real.length || !crypto.timingSafeEqual(given, real)) return bad(res, 'Not your booking', 403);
+    const charging = d.chargingSessions.find((s) => s.bookingId === b.id);
+    if (charging?.status === 'charging' || charging?.status === 'completed' || charging?.status === 'needs_review')
+      return bad(res, 'Cannot cancel a booking after charging has started', 409);
+    d.chargingSessions = d.chargingSessions.filter((s) => s.bookingId !== b.id);
     d.bookings = d.bookings.filter((x) => x !== b);
     d.passes = d.passes.filter((p) => p.bookingId !== b.id);
     store.save();

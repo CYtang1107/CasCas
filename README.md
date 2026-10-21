@@ -34,6 +34,12 @@ Charging partner (CPO) view across all condo sites: `jmb.html#cpo` (its 70% shar
 - **Cost recovery and operations (JMB):** receipts minus TNB electricity, other variable costs, fixed costs and logged repairs give the operating surplus, split between the JMB and the charging partner, with break-even kWh (the method in our proposal, section 6.2). Underused hours are flagged against the sharing hours. The PIN-gated maintenance log records faults, repairs and services with costs; a faulty bay leaves service for drivers until a repair is logged. A monthly performance report downloads as CSV.
 - **OCPP 1.6-J (shared mode):** the server is a small central system for the condo bays. Chargers connect over WebSocket to `/ocpp/<condo>-<bay>` (subprotocol `ocpp1.6`, HTTP Basic auth, OCPP security profile 1) and send BootNotification, Heartbeat, StatusNotification, Start/StopTransaction and MeterValues. A Faulted status is logged in the maintenance log and takes the bay out of service; going back to Available logs the repair. Smart charging sends SetChargingProfile so the bays charging share the condo's safe load limit (60% of nameplate until an electrical assessment sets `loadLimitKw`). The demo starts one simulated charger per condo bay; the JMB page shows them live and can simulate a fault.
 
+### Recorded charging sessions (new backend API)
+
+A confirmed residential booking can now be checked in to a connected OCPP bay. The returned one-time charger tag links a matching `StartTransaction`/`StopTransaction` to measured kWh and a recorded receipt. JMBs can retrieve a separate, authenticated monthly recorded-revenue API. **The existing visual revenue dashboards remain simulations** until the frontend team integrates the new API. No payment processing or automatic remote start is implied.
+
+See [backend charging lifecycle and API contract](docs/CHARGING_LIFECYCLE.md) for exact endpoints, a frontend integration checklist, cost assumptions and remaining pilot limitations.
+
 ## Data
 
 - **Public chargers:** live from [Open Charge Map](https://openchargemap.org) when a key is set; otherwise a saved copy (up to 7 days old) or the built-in demo list. The header shows which.
