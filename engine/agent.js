@@ -14,6 +14,7 @@ import { simulateCondoMonth } from './economics.js';
 import { searchKnowledge } from './kb.js';
 import { isTrip } from './geocode.js';
 import { idleWindow } from './cpo.js';
+import { checkCondoBooking } from './reservations.js';
 
 const ALL_PLACES = [...PLACES.filter((p) => p.id !== 'here'), ...TRIP_PLACES];
 // Open Charge Map often has names IN CAPITALS; show them in title case.
@@ -36,19 +37,19 @@ export const TOOLS = [
     battery_pct: { type: 'number' },
     arrive_min_pct: { type: 'number', description: 'Battery to keep on arrival, default 20' },
   }, ['destination', 'battery_pct']),
-  fn('best_time', 'Booking agent: find the cheapest open hour in the next 24 hours to charge at one charger.', {
+  fn('best_time', 'Scheduling agent: find an estimated cheap and less-busy hour in the next 24 hours. This is a forecast, not a confirmed booking.', {
     charger_id: { type: 'string' }, kwh: { type: 'number' },
   }, ['charger_id', 'kwh']),
   fn('estimate_cost', 'Cost estimation agent: kWh times the price at a charger right now.', {
     charger_id: { type: 'string' }, kwh: { type: 'number' },
   }, ['charger_id', 'kwh']),
-  fn('condo_revenue', 'Revenue agent: a condo\'s monthly report: charging income, the JMB (30%) and CPO (70%) shares, saving per unit, bay use, and the idle hours when more bays could be shared.', {
+  fn('condo_revenue', 'Forecast agent: simulated monthly condo charging income, JMB/CPO shares, unit savings and idle hours. NEVER describe this as collected, metered, or recorded revenue.', {
     condo_id: { type: 'string', description: 'e.g. lumina, serini' },
   }, ['condo_id']),
   fn('search_knowledge', 'Look up how CasSama works: sharing, votes, fees, tariffs, privacy, trips, income.', {
     query: { type: 'string' },
   }, ['query']),
-  fn('propose_booking', 'Offer the driver a button to book a charger. CasSama never books by itself; the driver must tap to confirm.', {
+  fn('propose_booking', 'Check provisional residential booking eligibility for the selected time and offer a Book button only when eligible. Booking is never confirmed until the driver submits it.', {
     charger_id: { type: 'string' }, reason: { type: 'string' },
   }, ['charger_id']),
   fn('fill_trip_form', 'Fill the Plan screen with what the driver said, so they can see and adjust it.', {
@@ -63,6 +64,8 @@ export const AGENT_OF = {
   propose_booking: 'Booking agent', fill_trip_form: 'Orchestrator',
 };
 
+const validEnergy = (v) => Number.isFinite(Number(v)) && Number(v) > 0 && Number(v) <= 200;
+const PARK_MS = { '30m': 30 * 60000, '2h': 2 * 3600000, '4h': 4 * 3600000, overnight: 8 * 3600000 };
 const pct = (v, d) => Math.min(100, Math.max(5, Number.isFinite(Number(v)) ? Number(v) : d));
 const findPlace = (name) => {
   const q = String(name || '').trim().toLowerCase();
@@ -83,6 +86,7 @@ export function runTool(name, args, env) {
   switch (name) {
     case 'find_chargers': {
       const place = findPlace(a.destination);
+      if (a.destination && !place) return { ok: false, error: `I cannot find \"${String(a.destination).slice(0, 80)}\" in the supported destinations. Please choose a place from the Map or Plan screen.` };
       const r = rankChargers({
         ...env.world, car: env.car, batteryPct: pct(a.battery_pct, 35), origin: env.origin,
         destination: place && !place.trip ? place : null, date: env.clock, residentCondoId: env.homeId || null,
@@ -113,21 +117,23 @@ export function runTool(name, args, env) {
       };
     }
     case 'best_time': {
+      if (!validEnergy(a.kwh)) return { error: 'Enter a charging amount greater than 0 and no more than 200 kWh.' };
       const ch = charger(a.charger_id);
       if (!ch) return { error: 'Unknown charger_id' };
       const condo = condoOf(ch);
-      const b = bestWindow({ charger: ch, condo, isResident: !!condo && condo.id === env.homeId, from: env.clock, hours: 24, kWh: Number(a.kwh) || 20 });
-      if (!b.best) return { charger: ch.name, open: false, note: 'Not open to you in the next 24 hours.' };
+      const b = bestWindow({ charger: ch, condo, isResident: !!condo && condo.id === env.homeId, from: env.clock, hours: 24, kWh: Number(a.kwh) });
+      if (!b.best) return { charger: ch.name, open: false, forecast: true, note: 'No suitable forecast window in the next 24 hours; this is not a live reservation check.' };
       const when = (d) => d.toLocaleString('en-MY', { weekday: 'short', hour: 'numeric', minute: '2-digit' });
-      return { charger: ch.name, now_cost_rm: b.now.cost, best_time: when(b.best.at), best_cost_rm: b.best.cost, saving_rm: b.savingRm, now_is_best: b.isNow };
+      return { charger: ch.name, now_cost_rm: b.now.cost, best_time: when(b.best.at), best_cost_rm: b.best.cost, saving_rm: b.savingRm, now_is_best: b.isNow, forecast: true, availability_confirmed: false };
     }
     case 'estimate_cost': {
+      if (!validEnergy(a.kwh)) return { error: 'Enter a charging amount greater than 0 and no more than 200 kWh.' };
       const ch = charger(a.charger_id);
       if (!ch) return { error: 'Unknown charger_id' };
       const condo = condoOf(ch);
       const price = priceAt(ch, env.clock, condo, !!condo && condo.id === env.homeId);
-      const kwh = Math.max(0, Number(a.kwh) || 0);
-      return { charger: ch.name, price_per_kwh: price, kwh, cost_rm: round2(kwh * price) };
+      const kwh = Number(a.kwh);
+      return { charger: ch.name, price_per_kwh: price, kwh, cost_rm: round2(kwh * price), estimated: true };
     }
     case 'condo_revenue': {
       const condo = env.world.condos.find((c) => c.id === String(a.condo_id || '').toLowerCase()) || env.world.condos.find((c) => c.name.toLowerCase().includes(String(a.condo_id || '').toLowerCase()));
@@ -139,6 +145,7 @@ export function runTool(name, args, env) {
       const s = condo.sharing;
       const hour = (h) => `${h % 12 || 12} ${h < 12 || h === 24 ? 'AM' : 'PM'}`;
       return {
+        source: 'simulated monthly forecast, not recorded charging sessions or collected payments',
         condo: condo.name, bays: condo.bays, month_receipts_rm: round2(r.revenue), kwh_delivered: Math.round(r.kWh),
         visitor_kwh_pct: Math.round((sim.kWhSold ? sim.visitorKwh / sim.kWhSold : 0) * 100), bay_use_pct: Math.round(sim.utilisation * 100),
         operating_surplus_rm: round2(r.operatingSurplus), jmb_income_rm: round2(r.jmbIncome), cpo_income_rm: round2(r.partnerIncome),
@@ -154,8 +161,20 @@ export function runTool(name, args, env) {
       return { passages: searchKnowledge(KNOWLEDGE, a.query || '').map(({ id, title, text }) => ({ id, title, text })) };
     case 'propose_booking': {
       const ch = env.world.chargers.find((c) => c.id === a.charger_id);
-      if (!ch) return { error: 'Unknown charger_id' };
-      return { proposed: true, charger_id: ch.id, name: tidyName(ch.name), note: 'A Book button is shown to the driver; nothing is booked until they tap it.' };
+      if (!ch) return { proposed: false, error: 'Unknown charger_id' };
+      if (ch.siteType === 'condo') {
+        const condo = condoOf(ch);
+        if (!condo) return { proposed: false, error: 'Unknown residential charging site' };
+        const start = env.clock.getTime();
+        const booking = { chargerId: ch.id, start, end: start + (PARK_MS[env.parkFor] || PARK_MS['2h']) };
+        const decision = checkCondoBooking({
+          condo, booking, role: condo.id === env.homeId ? 'resident' : 'visitor',
+          existing: env.bookings || [], faults: env.faultsByCondo?.[condo.id] || 0,
+        });
+        if (!decision.ok) return { proposed: false, error: decision.error, note: 'Choose a different time or charger. Existing bookings and JMB visitor rules are respected.' };
+      }
+      return { proposed: true, charger_id: ch.id, name: tidyName(ch.name),
+        availability_confirmed: false, note: 'Preliminary eligibility only. The server checks availability and access again when the driver confirms; nothing is booked yet.' };
     }
     case 'fill_trip_form': {
       const place = findPlace(a.destination);
@@ -179,15 +198,26 @@ export function guardInput(text) {
 }
 
 // Guardrail on the way out: every RM amount must come from a tool result or the driver's words.
+// Money must come from a monetary field or an explicit RM amount in trusted tool output.
+// Station IDs, distances, durations and user-supplied claims never count as price evidence.
 export function amountsGrounded(reply, sources) {
-  const nums = (s) => [...String(s).matchAll(/RM\s?(\d[\d,]*(?:\.\d+)?)/gi)].map((m) => Number(m[1].replace(/,/g, '')));
+  const nums = (s) => [...String(s).matchAll(/(-?\s*RM\s?-?\s*)(\d[\d,]*(?:\.\d+)?)/gi)].map((m) => (m[1].includes('-') ? -1 : 1) * Number(m[2].replace(/,/g, '')));
   const known = new Set();
-  for (const src of sources) {
-    for (const m of String(src).matchAll(/-?\d+(?:\.\d+)?/g)) {
-      const v = Number(m[0]);
-      known.add(round2(v).toFixed(2));
-      known.add(Math.round(v).toFixed(2));
-    }
+  const add = (v) => {
+    if (!Number.isFinite(v)) return;
+    known.add(round2(v).toFixed(2));
+    known.add(Math.round(v).toFixed(2));
+  };
+  const monetary = /(?:^|_)(?:rm|price|cost|saving|revenue|receipts|income|surplus|fee)(?:$|_)/i;
+  const visit = (v, key = '') => {
+    if (typeof v === 'number' && monetary.test(key)) add(v);
+    else if (typeof v === 'string' && (key === 'text' || key === 'note')) nums(v).forEach(add);
+    else if (Array.isArray(v)) v.forEach((item) => visit(item));
+    else if (v && typeof v === 'object') for (const [k, value] of Object.entries(v)) visit(value, k);
+  };
+  for (const source of sources) {
+    try { visit(JSON.parse(String(source))); }
+    catch { nums(source).forEach(add); }
   }
   const missing = nums(reply).filter((v) => !known.has(round2(v).toFixed(2)));
   return { ok: missing.length === 0, missing };
@@ -203,6 +233,9 @@ export function systemPrompt({ clock, carName, originName, homeName }) {
     '- Name at most two options. You may use **bold** for the charger name and "- " bullets; no headings, tables or links.',
     '- When comparing options, call one cheaper, closer or faster only if its numbers show it (compare cost_rm, distance_km and minutes).',
     '- For a shared condo bay, mention residents come first and the sharing hours if relevant.',
+    '- Condo revenue results are simulated forecasts, not recorded income or collected payments. Say SIMULATED or FORECAST when discussing these figures.',
+    '- A proposed booking is only provisional; never claim a bay has been reserved, nor that estimated occupancy is confirmed availability.',
+    '- The home condominium setting is user-selected, not proof of verified residency. A resident key is checked separately during booking.',
     'Rules you must follow:',
     '- Every price, cost, time, distance and battery figure must come from a tool result in this conversation. Never estimate numbers yourself.',
     '- Use search_knowledge for questions about how CasSama works, and say which fact you used.',

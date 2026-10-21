@@ -366,8 +366,8 @@ function homeHtml(r, ctx, trip, place) {
   }
   const myCondo = ctx.world.condos.find((c) => c.id === ui.homeId);
   const v = myCondo ? proposalFor(ctx, myCondo) : null;
-  if (v?.proposal?.status === 'open' && !v.myVote) notify(ctx.state.profile, `vote-${myCondo.id}-${v.proposal.id || v.proposal.openedAt || ''}`, `CasSama: vote at ${myCondo.name}`, `${describeSharing(v.proposal.settings).split('.')[0]}. Vote in the app within 7 days.`);
-  const voteBanner = v?.proposal?.status === 'open' && !v.myVote
+  if (v?.proposal?.status === 'open' && !v.proposal.legacyUnverified && !v.myVote) notify(ctx.state.profile, `vote-${myCondo.id}-${v.proposal.id || v.proposal.openedAt || ''}`, `CasSama: vote at ${myCondo.name}`, `${describeSharing(v.proposal.settings).split('.')[0]}. Vote in the app within 7 days.`);
+  const voteBanner = v?.proposal?.status === 'open' && !v.proposal.legacyUnverified && !v.myVote
     ? `<a class="banner vote" href="#account">${IC.help}<span><b>Vote on bay sharing</b> at ${esc(myCondo.name)}: ${esc(describeSharing(v.proposal.settings).split('.')[0])}</span><span aria-hidden="true">›</span></a>` : '';
   return active + voteBanner + flash + `<section class="home-pick">${head}${main}</section>`
     + placeRow(ctx, 'While you shop', (c) => c.siteType === 'mall')

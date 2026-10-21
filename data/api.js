@@ -43,19 +43,19 @@ export function createApi({ base = '', fetchFn = (...a) => globalThis.fetch(...a
     jmb: (condoId, token) => call(fetchFn, 'GET', u(`jmb/${id(condoId)}`), undefined, token),
     jmbChargingRevenue: (condoId, token, month) => call(fetchFn, 'GET',
       u(`jmb/${id(condoId)}/charging-revenue?month=${id(month)}`), undefined, token),
-    issueResidentKey: (condoId, token) =>
+    issueResidentKey: (condoId, token, unitId) =>
     call(
       fetchFn,
       'POST',
       u(`jmb/${id(condoId)}/resident-keys`),
-      {},
+      unitId ? { unitId } : {},
       token
     ),
     saveSharing: (condoId, token, sharing) => call(fetchFn, 'PUT', u(`jmb/${id(condoId)}/sharing`), { sharing }, token),
     ocpp: (condoId) => call(fetchFn, 'GET', u(`ocpp/${id(condoId)}`)),
     ocppAction: (condoId, token, bay, action) => call(fetchFn, 'POST', u(`jmb/${id(condoId)}/ocpp/${Number(bay)}`), { action }, token),
     proposal: (condoId) => call(fetchFn, 'GET', u(`condos/${id(condoId)}/proposal`)),
-    vote: (condoId, voterId, vote) => call(fetchFn, 'POST', u(`condos/${id(condoId)}/proposal/vote`), { voterId, vote }),
+    vote: (condoId, residentKey, vote) => call(fetchFn, 'POST', u(`condos/${id(condoId)}/proposal/vote`), { residentKey, vote }),
     propose: (condoId, token, settings) => call(fetchFn, 'POST', u(`jmb/${id(condoId)}/proposal`), { settings }, token),
     closeVote: (condoId, token) => call(fetchFn, 'POST', u(`jmb/${id(condoId)}/proposal/close`), {}, token),
     sampleVotes: (condoId, token) => call(fetchFn, 'POST', u(`jmb/${id(condoId)}/proposal/sample`), {}, token),

@@ -6,6 +6,7 @@ import path from 'node:path';
 import { createApp } from '../server/app.js';
 import { DEMO_CHARGERS } from '../data/chargers-demo.js';
 import { CONDO_SITES } from '../data/chargers.js';
+import { CONDOS } from '../data/condos.js';
 
 const fixture = JSON.parse(fs.readFileSync(new URL('./fixtures/ocm-sample.json', import.meta.url), 'utf8'));
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'cascas-srv-'));
@@ -14,7 +15,7 @@ const WED20 = new Date(2026, 9, 21, 20).getTime();
 
 async function start(opts = {}) {
   const app = createApp({ dataDir: opts.dataDir || tmp(), secret: 'test', pins: { lumina: '4821', serini: '7305' },
-    ocmKey: opts.ocmKey ?? '', fetchFn: opts.fetchFn || (async () => { throw new Error('offline'); }), now: opts.now });
+    condos: opts.condos || CONDOS, ocmKey: opts.ocmKey ?? '', fetchFn: opts.fetchFn || (async () => { throw new Error('offline'); }), now: opts.now });
   const server = await new Promise((r) => { const s = app.listen(0, () => r(s)); });
   const base = `http://127.0.0.1:${server.address().port}`;
   const call = async (method, url, body, token) => {
@@ -226,29 +227,84 @@ test('TomTom data through the server: validated, cached, key kept on the server'
   await new Promise((r) => server.close(r));
 });
 
-test('residents vote on a sharing change; it applies only if it passes', async () => {
+test('a verified unit may vote once and change its vote; forged device IDs cannot vote', async () => {
+  const pilot = { ...CONDOS.find(c => c.id === 'lumina'), units: 10 };
+  const s = await start({ condos: [pilot] });
+  try {
+    const settings = { enabled: true, mode: 'auto', days: 'all', start: 9, end: 17, reservedBays: 2, visitorPrice: 1.2 };
+    const login = await s.call('POST', '/api/jmb/login', { condoId: 'lumina', pin: '4821' });
+    const token = login.body.token;
+    assert.equal((await s.call('POST', '/api/jmb/lumina/proposal', { settings }, token)).status, 201);
+
+    assert.equal((await s.call('POST', '/api/condos/lumina/proposal/vote', { voterId: 'fake-device-100', vote: 'yes' })).status, 403);
+    const legacyKey = await s.call('POST', '/api/jmb/lumina/resident-keys', {}, token);
+    assert.equal(legacyKey.status, 201, 'booking-only keys still work');
+    assert.equal(legacyKey.body.votingEligible, false);
+    assert.equal((await s.call('POST', '/api/condos/lumina/proposal/vote', { residentKey: legacyKey.body.residentKey, vote: 'yes' })).status, 403);
+    assert.equal((await s.call('POST', '/api/jmb/lumina/resident-keys', { unitId: 'no@unit' }, token)).status, 400);
+
+    // JMB independently verifies the household/unit before issuing a voting key.
+    const first = await s.call('POST', '/api/jmb/lumina/resident-keys', { unitId: 'A-12-08' }, token);
+    const duplicate = await s.call('POST', '/api/jmb/lumina/resident-keys', { unitId: ' a-12-08 ' }, token);
+    assert.equal(first.status, 201);
+    assert.equal(duplicate.body.votingEligible, true);
+    const vote = (key, choice) => s.call('POST', '/api/condos/lumina/proposal/vote', { residentKey: key, vote: choice });
+    assert.equal((await vote(first.body.residentKey, 'yes')).status, 200);
+    let result = await vote(duplicate.body.residentKey, 'no');
+    assert.equal(result.status, 200);
+    assert.deepEqual([result.body.tally.yes, result.body.tally.no, result.body.tally.cast], [0, 1, 1], 'two keys for the same unit count as one vote');
+    assert.ok(!JSON.stringify(result.body).includes(first.body.residentKey));
+    assert.ok(!JSON.stringify(result.body).includes('A-12-08'));
+    result = await vote(first.body.residentKey, 'yes');
+    assert.equal(result.body.tally.cast, 1);
+
+    // Demo preview must not change the official tally or community settings.
+    const sample = await s.call('POST', '/api/jmb/lumina/proposal/sample', {}, token);
+    assert.equal(sample.status, 200);
+    assert.ok(sample.body.proposal.demoPreview);
+    assert.equal(sample.body.tally.cast, 1);
+    const closed = await s.call('POST', '/api/jmb/lumina/proposal/close', {}, token);
+    assert.equal(closed.body.proposal.status, 'passed', 'single unit meets 10% quorum when there are ten units');
+    assert.equal((await s.call('GET', '/api/world')).body.sharing.lumina.mode, 'auto');
+  } finally {
+    await s.close();
+  }
+});
+
+test('revocation and cross-condo credentials cannot influence voting', async () => {
   const s = await start();
-  const settings = { enabled: true, mode: 'auto', days: 'all', start: 9, end: 17, reservedBays: 2, visitorPrice: 1.2 };
-  assert.equal((await s.call('POST', '/api/jmb/lumina/proposal', { settings })).status, 401);
-  const token = (await s.call('POST', '/api/jmb/login', { condoId: 'lumina', pin: '4821' })).body.token;
-  assert.equal((await s.call('POST', '/api/jmb/lumina/proposal', { settings }, token)).status, 201);
-  let pub = (await s.call('GET', '/api/condos/lumina/proposal')).body;
-  assert.equal(pub.proposal.status, 'open');
-  assert.equal(pub.proposal.votes, undefined, 'individual votes stay private');
-  assert.equal((await s.call('POST', '/api/condos/lumina/proposal/vote', { voterId: 'bad id!', vote: 'yes' })).status, 400);
-  await s.call('POST', '/api/condos/lumina/proposal/vote', { voterId: 'device-1234', vote: 'yes' });
-  pub = (await s.call('POST', '/api/condos/lumina/proposal/vote', { voterId: 'device-1234', vote: 'no' })).body;
-  assert.deepEqual([pub.tally.yes, pub.tally.no], [0, 1], 'a device can change its vote, not vote twice');
-  const closedEarly = (await s.call('POST', '/api/jmb/lumina/proposal/close', {}, token)).body;
-  assert.equal(closedEarly.proposal.status, 'failed');
-  assert.notEqual((await s.call('GET', '/api/world')).body.sharing.lumina?.mode, 'auto', 'a failed vote changes nothing');
-  await s.call('POST', '/api/jmb/lumina/proposal', { settings }, token);
-  const sample = (await s.call('POST', '/api/jmb/lumina/proposal/sample', {}, token)).body;
-  assert.ok(sample.proposal.sampleVotes > 0 && sample.tally.quorumMet);
-  const passed = (await s.call('POST', '/api/jmb/lumina/proposal/close', {}, token)).body;
-  assert.equal(passed.proposal.status, 'passed');
-  assert.equal((await s.call('GET', '/api/world')).body.sharing.lumina.mode, 'auto');
-  await s.close();
+  try {
+    const lumina = (await s.call('POST', '/api/jmb/login', { condoId: 'lumina', pin: '4821' })).body.token;
+    const serini = (await s.call('POST', '/api/jmb/login', { condoId: 'serini', pin: '7305' })).body.token;
+    const settings = { enabled: true, mode: 'auto', days: 'all', start: 9, end: 17, reservedBays: 2, visitorPrice: 1.2 };
+    await s.call('POST', '/api/jmb/lumina/proposal', { settings }, lumina);
+    const other = (await s.call('POST', '/api/jmb/serini/resident-keys', { unitId: 'A-12-08' }, serini)).body;
+    const mine = (await s.call('POST', '/api/jmb/lumina/resident-keys', { unitId: 'A-12-08' }, lumina)).body;
+    assert.equal((await s.call('POST', '/api/condos/lumina/proposal/vote', { residentKey: other.residentKey, vote: 'yes' })).status, 403);
+    assert.equal((await s.call('DELETE', `/api/jmb/lumina/resident-keys/${mine.keyId}`, null, lumina)).status, 200);
+    assert.equal((await s.call('POST', '/api/condos/lumina/proposal/vote', { residentKey: mine.residentKey, vote: 'yes' })).status, 403);
+    assert.equal((await s.call('GET', '/api/condos/lumina/proposal')).body.tally.cast, 0);
+  } finally {
+    await s.close();
+  }
+});
+
+test('simulated votes cannot enact sharing even when the preview predicts a pass', async () => {
+  const pilot = { ...CONDOS.find(c => c.id === 'lumina'), units: 10 };
+  const s = await start({ condos: [pilot] });
+  try {
+    const token = (await s.call('POST', '/api/jmb/login', { condoId: 'lumina', pin: '4821' })).body.token;
+    const settings = { enabled: true, mode: 'auto', days: 'all', start: 9, end: 17, reservedBays: 2, visitorPrice: 1.2 };
+    await s.call('POST', '/api/jmb/lumina/proposal', { settings }, token);
+    const sample = (await s.call('POST', '/api/jmb/lumina/proposal/sample', {}, token)).body;
+    assert.ok(sample.proposal.sampleVotes);
+    assert.equal(sample.tally.cast, 0);
+    const closed = await s.call('POST', '/api/jmb/lumina/proposal/close', {}, token);
+    assert.equal(closed.body.proposal.status, 'failed');
+    assert.notEqual((await s.call('GET', '/api/world')).body.sharing.lumina?.mode, 'auto');
+  } finally {
+    await s.close();
+  }
 });
 
 test('API prevents overbooking and releases cancelled slots', async () => {
@@ -629,4 +685,29 @@ test('direct-server login does not trust spoofed X-Forwarded-For values', async 
     });
     assert.equal(blocked.status, 429);
   } finally { await s.close(); }
+});
+
+test('legacy device-ID proposals cannot be counted or enacted after upgrade', async () => {
+  const dir = tmp();
+  const settings = { enabled: true, mode: 'auto', days: 'all', start: 9, end: 17, reservedBays: 2, visitorPrice: 1.2 };
+  fs.writeFileSync(path.join(dir, 'store.json'), JSON.stringify({
+    proposals: { lumina: { id: 'old-device-vote', condoId: 'lumina', status: 'open',
+      settings, createdAt: 100, closesAt: Date.now() + 864e5,
+      votes: { 'fake-device-a': 'yes', 'fake-device-b': 'yes' } } }
+  }));
+  const s = await start({ dataDir: dir });
+  try {
+    const pub = await s.call('GET', '/api/condos/lumina/proposal');
+    assert.equal(pub.body.proposal.legacyUnverified, true);
+    assert.equal(pub.body.tally.cast, 0, 'legacy votes have no verified eligibility');
+    assert.equal((await s.call('POST', '/api/condos/lumina/proposal/vote', { voterId: 'fake-device-c', vote: 'yes' })).status, 409);
+    const token = (await s.call('POST', '/api/jmb/login', { condoId: 'lumina', pin: '4821' })).body.token;
+    assert.equal((await s.call('POST', '/api/jmb/lumina/proposal/close', {}, token)).status, 409);
+    assert.notEqual((await s.call('GET', '/api/world')).body.sharing.lumina?.mode, 'auto');
+    const replacement = await s.call('POST', '/api/jmb/lumina/proposal', { settings }, token);
+    assert.equal(replacement.status, 201);
+    assert.equal(replacement.body.proposal.votingScheme, 'verified-unit-v1');
+  } finally {
+    await s.close();
+  }
 });

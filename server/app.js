@@ -70,22 +70,22 @@ export function createApp({ dataDir, secret, pins, ocmKey = '', ocppPassword = c
       .update(key)
       .digest('hex');
 
-  const isResidentKey = (key, condoId) => {
-    if (
-      typeof key !== 'string' ||
-      !/^[A-Za-z0-9_-]{32}$/.test(key)
-    ) {
-      return false;
-    }
-
+  const residentCredential = (key, condoId) => {
+    if (typeof key !== 'string' || !/^[A-Za-z0-9_-]{32}$/.test(key)) return null;
     const entry = store.data.residentKeys[keyHash(key)];
-
-    return (
-      entry?.condoId === condoId &&
-      entry.expiresAt > now() &&
-      entry.revokedAt == null
-    );
+    return entry?.condoId === condoId && entry.expiresAt > now() && entry.revokedAt == null
+      ? entry : null;
   };
+  const isResidentKey = (key, condoId) => !!residentCredential(key, condoId);
+  // This identifier is entered and independently verified by JMB at issuance.
+  // Store only an HMAC, not an apartment/unit address in the JSON database.
+  const normalizeUnit = (value) => {
+    if (typeof value !== 'string') return null;
+    const unit = value.trim().toUpperCase().replace(/\s+/g, '');
+    return /^[A-Z0-9][A-Z0-9\/-]{0,39}$/.test(unit) ? unit : null;
+  };
+  const unitHash = (condoId, unit) => crypto.createHmac('sha256', secret)
+    .update(`casSama:unit-v1:${condoId}:${unit}`).digest('hex');
   const chargers = chargerSource({ dataDir, fetchFn, key: ocmKey, now, condoSites: condoSitesFor(condos) });
   const app = express();
   app.disable('x-powered-by');
@@ -131,7 +131,14 @@ export function createApp({ dataDir, secret, pins, ocmKey = '', ocppPassword = c
     const history = Array.isArray(b.history) ? b.history.slice(-6) : [];
     try {
       const world = { chargers: (await chargers()).chargers, condos: condos.map((x) => condoWithSharing(x.id)) };
-      const env = { world, car, origin, clock, homeId: home?.id || null, parkFor: c.parkFor, prefs: c.prefs || {} };
+      const env = {
+        world, car, origin, clock, homeId: home?.id || null, parkFor: c.parkFor, prefs: c.prefs || {},
+        // Booking suggestions use the same confirmed reservations and fault records as the API.
+        // This is preliminary only; actual bookings are always validated again on submit.
+        bookings: store.data.bookings,
+        faultsByCondo: Object.fromEntries(condos.map((site) =>
+          [site.id, faultBays(store.data.maintenance[site.id] || [], site.bays)])),
+      };
       res.json(await agent.ask({ text, history, env, context: { clock, carName: car.name, originName: origin.name, homeName: home?.name } }));
     } catch (e) {
       console.warn('AI assistant failed:', e.message); // provider status and message, never the key
@@ -207,6 +214,13 @@ export function createApp({ dataDir, secret, pins, ocmKey = '', ocppPassword = c
         return bad(res, 'Unknown condo', 404);
       }
   
+      const rawUnit = req.body?.unitId;
+      const unit = rawUnit === undefined || rawUnit === null || rawUnit === ''
+        ? null : normalizeUnit(rawUnit);
+      if (rawUnit !== undefined && rawUnit !== null && rawUnit !== '' && !unit)
+        return bad(res, 'Invalid unit reference (use letters, numbers, / or -; up to 40 characters)');
+      // Legacy/booking-only keys without unitId remain valid for charging, but
+      // cannot be used to vote. JMB must verify unit ownership before issuing.
       const residentKey =
         crypto.randomBytes(24).toString('base64url');
   
@@ -216,7 +230,8 @@ export function createApp({ dataDir, secret, pins, ocmKey = '', ocppPassword = c
         condoId: condo.id,
         issuedAt: now(),
         expiresAt,
-        revokedAt: null
+        revokedAt: null,
+        ...(unit ? { unitHash: unitHash(condo.id, unit) } : {})
       };
   
       store.save();
@@ -224,6 +239,7 @@ export function createApp({ dataDir, secret, pins, ocmKey = '', ocppPassword = c
       res.status(201).json({
         residentKey,
         keyId: keyHash(residentKey).slice(0, 16),
+        votingEligible: !!unit,
         expiresAt
       });
     }
@@ -240,6 +256,7 @@ export function createApp({ dataDir, secret, pins, ocmKey = '', ocppPassword = c
         keyId: hash.slice(0, 16), issuedAt: entry.issuedAt ?? null,
         expiresAt: entry.expiresAt, revokedAt: entry.revokedAt ?? null,
         active: entry.revokedAt == null && entry.expiresAt > now(),
+        votingEligible: typeof entry.unitHash === 'string',
       }));
     res.set('Cache-Control', 'no-store').json({ keys });
   });
@@ -493,14 +510,21 @@ export function createApp({ dataDir, secret, pins, ocmKey = '', ocppPassword = c
     res.json({ sharing: next });
   });
 
-  // ---- Residents vote on sharing changes ----
+  // ---- Resident-governed sharing changes ----
+  // Old client-selected voter IDs are no longer accepted. A verified residential
+  // unit is the voting identity; multiple keys for one unit can change one vote,
+  // but cannot increase quorum. A credential does not reveal its unit publicly.
+  const VERIFIED_VOTING = 'verified-unit-v1';
   const publicProposal = (condo) => {
     const p = store.data.proposals[condo.id];
     if (!p) return { proposal: null };
     const { votes, ...rest } = p;
-    return { proposal: rest, tally: tally(p, condo.units) };
+    const legacy = p.votingScheme !== VERIFIED_VOTING;
+    return {
+      proposal: { ...rest, ...(legacy ? { legacyUnverified: true } : {}) },
+      tally: tally(legacy ? { ...p, votes: {} } : p, condo.units),
+    };
   };
-  const voterKey = (id) => crypto.createHash('sha256').update(`cascas-vote:${id}`).digest('hex').slice(0, 24);
 
   app.get('/api/condos/:condoId/proposal', (req, res) => {
     const condo = condoWithSharing(req.params.condoId);
@@ -512,9 +536,12 @@ export function createApp({ dataDir, secret, pins, ocmKey = '', ocppPassword = c
     const condo = condoWithSharing(req.params.condoId);
     const p = condo && store.data.proposals[condo.id];
     if (!p) return bad(res, 'No vote is open for this condo', 404);
-    const voter = String(req.body?.voterId || '');
-    if (!/^[A-Za-z0-9-]{8,64}$/.test(voter)) return bad(res, 'Invalid voter');
-    const r = castVote(p, voterKey(voter), req.body?.vote, now());
+    if (p.votingScheme !== VERIFIED_VOTING)
+      return bad(res, 'This proposal used unverified voting; ask JMB to create a new one', 409);
+    const credential = residentCredential(req.body?.residentKey, condo.id);
+    if (!credential) return bad(res, 'Valid resident access key required to vote', 403);
+    if (!credential.unitHash) return bad(res, 'JMB must issue a unit-verified key before voting', 403);
+    const r = castVote(p, credential.unitHash, req.body?.vote, now());
     if (r.error) return bad(res, r.error, r.error.includes('closed') ? 409 : 400);
     store.data.proposals[condo.id] = r.proposal;
     store.save();
@@ -526,7 +553,7 @@ export function createApp({ dataDir, secret, pins, ocmKey = '', ocppPassword = c
     const next = cleanSharing(req.body?.settings);
     const err = next ? validateSharing(next, condo.bays) : 'Invalid settings';
     if (err) return bad(res, err);
-    store.data.proposals[condo.id] = createProposal({ id: crypto.randomUUID(), condoId: condo.id, settings: next, now: now() });
+    store.data.proposals[condo.id] = { ...createProposal({ id: crypto.randomUUID(), condoId: condo.id, settings: next, now: now() }), votingScheme: VERIFIED_VOTING };
     store.save();
     res.status(201).json(publicProposal(condo));
   });
@@ -535,6 +562,8 @@ export function createApp({ dataDir, secret, pins, ocmKey = '', ocppPassword = c
     const condo = condoWithSharing(req.params.condoId);
     const p = store.data.proposals[condo.id];
     if (!p || p.status !== 'open') return bad(res, 'No open vote', 409);
+    if (p.votingScheme !== VERIFIED_VOTING)
+      return bad(res, 'Legacy unverified proposal cannot change sharing; create a new proposal', 409);
     const closed = closeProposal(p, condo.units, now());
     store.data.proposals[condo.id] = closed;
     if (closed.status === 'passed') store.data.sharing[condo.id] = closed.settings;
@@ -542,14 +571,15 @@ export function createApp({ dataDir, secret, pins, ocmKey = '', ocppPassword = c
     res.json(publicProposal(condoWithSharing(condo.id)));
   });
 
-  // Demo only: fill in votes from simulated residents, labelled as such in the proposal.
+  // Demo only: display a synthetic preview without contributing any votes to a
+  // live proposal or affecting sharing on close. Never count simulated votes.
   app.post('/api/jmb/:condoId/proposal/sample', requireJmb, (req, res) => {
     const condo = condoWithSharing(req.params.condoId);
     let p = store.data.proposals[condo.id];
     if (!p || p.status !== 'open') return bad(res, 'No open vote', 409);
     const n = Math.min(condo.units, Math.max(1, Math.round(condo.units * 0.18)));
-    for (let i = 0; i < n; i++) p = castVote(p, `sample-${i}`, i % 10 < 7 ? 'yes' : 'no', now()).proposal;
-    p = { ...p, sampleVotes: n };
+    const yes = Math.floor(n * 0.7);
+    p = { ...p, sampleVotes: n, demoPreview: { yes, no: n - yes, label: 'SAMPLE ONLY — not included in the official tally' } };
     store.data.proposals[condo.id] = p;
     store.save();
     res.json(publicProposal(condo));

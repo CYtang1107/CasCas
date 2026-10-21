@@ -105,7 +105,7 @@ export function renderJmb(root, ctx) {
         ${autoHtml}
         ${proposalHtml(condo, vote, 'jmb', priv.canEdit)}
         <p class="error vote-err" role="alert" hidden></p>
-        ${priv.canEdit && vote.proposal?.status !== 'open' ? `<details class="propose"><summary>Propose a change to residents</summary>
+        ${priv.canEdit && (vote.proposal?.status !== 'open' || vote.proposal?.legacyUnverified) ? `<details class="propose"><summary>Propose a change to residents</summary>
         <form id="j-share" class="form" novalidate>
           <label class="field">Sharing mode <select id="j-mode"><option value="auto">Auto: share whenever bays are idle</option><option value="hours">Fixed hours</option></select></label>
           <label class="field">Days <select id="j-days">
@@ -156,6 +156,10 @@ export function renderJmb(root, ctx) {
             that the applicant is a resident of this condominium.
           </p>
 
+          <label class="field">Verified unit reference (needed for voting)
+            <input id="j-resident-unit" type="text" maxlength="40" placeholder="e.g. A-12-08" autocomplete="off">
+          </label>
+          <p class="muted">Confirm the occupant and their unit from JMB records first. Without a unit reference, the key permits booking but not voting.</p>
           <button
             type="button"
             class="btn primary"
@@ -218,16 +222,18 @@ export function renderJmb(root, ctx) {
 
       const output = $('#j-key-result');
 
+      const unitId = $('#j-resident-unit')?.value.trim() || '';
       const result = await ctx.api.issueResidentKey(
         condo.id,
-        token
+        token,
+        unitId
       );
 
       output.hidden = false;
 
       if (result.ok) {
         output.textContent =
-          `Resident key (copy now): ${result.data.residentKey}`;
+          `Resident key (copy now): ${result.data.residentKey}. ${result.data.votingEligible ? 'Voting is enabled for the verified unit.' : 'Booking-only key; unit verification required for voting.'}`;
       } else {
         output.textContent =
           `Could not issue key: ${result.error}`;
