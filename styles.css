@@ -41,7 +41,7 @@ a { color: var(--accent); }
 .brand { display: flex; align-items: center; gap: 10px; margin-right: auto; }
 .brand b { font: 700 1.25rem/1 var(--display); display: block; }
 .brand small { color: var(--muted); font-size: 0.78rem; }
-.logo { width: 30px; height: 30px; fill: var(--accent-ink); background: var(--accent); border-radius: 8px; padding: 4px; }
+.logo { display: block; width: 44px; height: 44px; flex: none; object-fit: contain; }
 .roles { display: flex; background: var(--bg); border: 1px solid var(--line); border-radius: 999px; padding: 3px; }
 .roles a { padding: 6px 16px; border-radius: 999px; text-decoration: none; color: var(--muted); font-weight: 600; }
 .roles a[aria-current="page"] { background: var(--accent); color: var(--accent-ink); }
@@ -396,7 +396,6 @@ select, input[type="number"], input[type="text"], input[type="datetime-local"] {
 .top { background: linear-gradient(135deg, var(--accent), var(--accent-2)); border: 0; color: #FFFFFF; }
 .top .brand b, .top .brand small, .top .source, .top .clock label { color: #FFFFFF; }
 .top .brand small, .top .source { opacity: 0.85; }
-.top .logo { background: rgba(255, 255, 255, 0.18); fill: #FFFFFF; }
 .top .clock select { background: rgba(255, 255, 255, 0.16); color: #FFFFFF; border-color: rgba(255, 255, 255, 0.3); }
 .top .clock select option { color: #0F1F1B; }
 .top .roles { background: rgba(255, 255, 255, 0.14); border-color: transparent; }
@@ -765,7 +764,6 @@ main:focus { outline: none; }
 .top { position: sticky; z-index: 1200; top: 0; padding: 16px clamp(16px, 3vw, 40px); padding-top: calc(16px + env(safe-area-inset-top, 0px)); gap: 16px; background: var(--bg); color: var(--fg); border-bottom: 1px solid var(--line); }
 .top .brand b { color: var(--fg); font: 700 1.5rem/1 var(--display); letter-spacing: -.035em; }
 .top .brand small { display: block; color: var(--muted); opacity: 1; margin-top: 5px; font-size: .75rem; }
-.top .logo { width: 36px; height: 36px; padding: 7px; background: var(--accent); fill: var(--accent-ink); border-radius: 10px; }
 .top .roles { border: 1px solid var(--line); background: var(--surface); padding: 4px; gap: 2px; box-shadow: none; }
 .top .roles a { color: var(--muted); font-size: .85rem; padding: 12px 16px; min-height: 44px; border-radius: 30px; }
 .top .roles a[aria-current="page"] { color: var(--accent-ink); background: var(--accent); }
@@ -973,7 +971,6 @@ select.bare option { color: var(--fg); background: var(--surface); }
 .fchips button { min-height: 44px; }
 /* Operations Studio: restrained neo-brutalism, analytical hierarchy. */
 .portal-page .top { background: var(--surface); border-bottom: 1.5px solid var(--ink-line); }
-.portal-page .top .logo { background: var(--lime); fill: var(--fg); border: 1.5px solid var(--ink-line); border-radius: 7px; }
 .portal-page .portal-tag { display: inline-block; color: var(--fg); background: var(--lime); font: 500 .75rem/1 var(--body); padding: 6px 8px; border: 1px solid var(--ink-line); border-radius: 4px; vertical-align: 3px; margin-left: 6px; }
 .top .app-switch { color: var(--fg); background: var(--surface); border: 1px solid var(--ink-line); }
 .portal-page main { max-width: 1600px; }

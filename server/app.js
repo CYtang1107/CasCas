@@ -21,7 +21,7 @@ import { START } from '../data/places.js';
 import { cleanSession, cleanBooking, cleanCheckin, cleanSharing } from './validate.js';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
-const FILES = ['index.html', 'jmb.html', 'app.js', 'config.js', 'state.js', 'styles.css'];
+const FILES = ['index.html', 'jmb.html', 'app.js', 'config.js', 'state.js', 'styles.css', 'design/logo.png'];
 const DIRS = ['data', 'engine', 'views'];
 const MAX_SESSIONS = 5000;
 const MAX_MAINTENANCE = 500;
