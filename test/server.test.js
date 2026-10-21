@@ -250,3 +250,331 @@ test('residents vote on a sharing change; it applies only if it passes', async (
   assert.equal((await s.call('GET', '/api/world')).body.sharing.lumina.mode, 'auto');
   await s.close();
 });
+
+test('API prevents overbooking and releases cancelled slots', async () => {
+  const s = await start();
+
+  try {
+    const confirmed = [];
+
+    // Lumina has 10 bays, with 2 reserved for residents.
+    // Therefore, only 8 simultaneous visitor bookings are allowed.
+    for (let i = 0; i < 8; i++) {
+      const result = await s.call('POST', '/api/bookings', {
+        session: session({ anonId: `V${i + 1}` }),
+        booking: booking(),
+        pass: { plate: `WXY${1000 + i}`, consent: true }
+      });
+
+      assert.equal(result.status, 201);
+      confirmed.push(result.body);
+    }
+
+    // Ninth visitor must be rejected.
+    const ninth = await s.call('POST', '/api/bookings', {
+      session: session({ anonId: 'V9' }),
+      booking: booking(),
+      pass: { plate: 'WXY9999', consent: true }
+    });
+
+    assert.equal(ninth.status, 409);
+
+    // JMB logs in to issue resident access keys.
+    const login = await s.call(
+      'POST',
+      '/api/jmb/login',
+      { condoId: 'lumina', pin: '4821' }
+    );
+
+    assert.equal(login.status, 200);
+
+    // Two verified residents can use their reserved capacity.
+    for (let i = 0; i < 2; i++) {
+
+      // JMB issues a unique key for each resident.
+      const issued = await s.call(
+        'POST',
+        '/api/jmb/lumina/resident-keys',
+        {},
+        login.body.token
+      );
+
+      assert.equal(issued.status, 201);
+
+      // Resident books using their issued key.
+      const resident = await s.call(
+        'POST',
+        '/api/bookings',
+        {
+          session: session({
+            anonId: `R${i + 1}`,
+            role: 'resident'
+          }),
+          booking: booking(),
+          residentKey: issued.body.residentKey
+        }
+      );
+
+      assert.equal(resident.status, 201);
+    }
+
+    // Issue a valid key for the third resident.
+    const thirdKey = await s.call(
+      'POST',
+      '/api/jmb/lumina/resident-keys',
+      {},
+      login.body.token
+    );
+
+    assert.equal(thirdKey.status, 201);
+
+    // Third resident has valid access,
+    // but all physical bays are occupied.
+    const thirdResident = await s.call(
+      'POST',
+      '/api/bookings',
+      {
+        session: session({
+          anonId: 'R3',
+          role: 'resident'
+        }),
+        booking: booking(),
+        residentKey: thirdKey.body.residentKey
+      }
+    );
+
+    assert.equal(thirdResident.status, 409);
+
+    // Cancel one visitor reservation.
+    const cancelled = await s.call(
+      'DELETE',
+      `/api/bookings/${confirmed[0].bookingId}`,
+      { cancelToken: confirmed[0].cancelToken }
+    );
+
+    assert.equal(cancelled.status, 200);
+
+    // That slot should become available again.
+    const replacement = await s.call('POST', '/api/bookings', {
+      session: session({ anonId: 'V10' }),
+      booking: booking(),
+      pass: { plate: 'WXY8888', consent: true }
+    });
+
+    assert.equal(replacement.status, 201);
+
+  } finally {
+    await s.close();
+  }
+});
+
+test('Residents require JMB-issued access keys', async () => {
+  const s = await start();
+
+  try {
+    const residentSession = session({
+      role: 'resident',
+      anonId: 'R12'
+    });
+
+    const payload = {
+      session: residentSession,
+      booking: booking()
+    };
+
+    // Claiming resident status is insufficient.
+    const noKey = await s.call(
+      'POST', '/api/bookings', payload
+    );
+
+    assert.equal(noKey.status, 403);
+
+    // Visitors cannot issue their own access keys.
+    const unauthorized = await s.call(
+      'POST', '/api/jmb/lumina/resident-keys', {}
+    );
+
+    assert.equal(unauthorized.status, 401);
+
+    // The JMB authenticates.
+    const login = await s.call(
+      'POST',
+      '/api/jmb/login',
+      { condoId: 'lumina', pin: '4821' }
+    );
+
+    // An approved resident receives a key.
+    const issued = await s.call(
+      'POST',
+      '/api/jmb/lumina/resident-keys',
+      {},
+      login.body.token
+    );
+
+    assert.equal(issued.status, 201);
+
+    // That key permits a resident reservation.
+    const confirmed = await s.call(
+      'POST',
+      '/api/bookings',
+      {
+        ...payload,
+        residentKey: issued.body.residentKey
+      }
+    );
+
+    assert.equal(confirmed.status, 201);
+
+  } finally {
+    await s.close();
+  }
+});
+
+test('Resident keys cannot access another condo', async () => {
+  const s = await start();
+
+  try {
+    // JMB of Serini logs in.
+    const login = await s.call(
+      'POST',
+      '/api/jmb/login',
+      { condoId: 'serini', pin: '7305' }
+    );
+
+    assert.equal(login.status, 200);
+
+    // Issue a Serini resident key.
+    const issued = await s.call(
+      'POST',
+      '/api/jmb/serini/resident-keys',
+      {},
+      login.body.token
+    );
+
+    assert.equal(issued.status, 201);
+
+    // Attempt to book at Lumina using the Serini key.
+    const result = await s.call(
+      'POST',
+      '/api/bookings',
+      {
+        session: session({
+          anonId: 'R1',
+          role: 'resident'
+        }),
+        booking: booking(),
+        residentKey: issued.body.residentKey
+      }
+    );
+
+    assert.equal(result.status, 403);
+
+  } finally {
+    await s.close();
+  }
+});
+
+test('Faulty bays reduce capacity until repaired', async () => {
+  const s = await start();
+
+  try {
+    const login = await s.call(
+      'POST',
+      '/api/jmb/login',
+      { condoId: 'lumina', pin: '4821' }
+    );
+
+    const token = login.body.token;
+
+    // JMB reports Bay 1 as faulty.
+    const fault = await s.call(
+      'POST',
+      '/api/jmb/lumina/maintenance',
+      {
+        entry: {
+          bay: 1,
+          kind: 'fault',
+          costRm: 0,
+          at: WED11,
+          note: 'Charger offline'
+        }
+      },
+      token
+    );
+
+    assert.equal(fault.status, 201);
+
+    // With 1 faulty bay, only 7 visitor bays remain.
+    for (let i = 0; i < 7; i++) {
+      const result = await s.call(
+        'POST',
+        '/api/bookings',
+        {
+          session: session({
+            anonId: `V${i + 1}`
+          }),
+          booking: booking(),
+          pass: {
+            plate: `WXY${1000 + i}`,
+            consent: true
+          }
+        }
+      );
+
+      assert.equal(result.status, 201);
+    }
+
+    // The eighth visitor must be rejected.
+    const rejected = await s.call(
+      'POST',
+      '/api/bookings',
+      {
+        session: session({ anonId: 'V8' }),
+        booking: booking(),
+        pass: {
+          plate: 'WXY9999',
+          consent: true
+        }
+      }
+    );
+
+    assert.equal(rejected.status, 409);
+
+    // JMB repairs the charger.
+    const repaired = await s.call(
+      'POST',
+      '/api/jmb/lumina/maintenance',
+      {
+        entry: {
+          bay: 1,
+          kind: 'repair',
+          costRm: 150,
+          at: WED11 + 60000,
+          note: 'Charger repaired'
+        }
+      },
+      token
+    );
+
+    assert.equal(repaired.status, 201);
+
+    // Eighth visitor should now be accepted.
+    const accepted = await s.call(
+      'POST',
+      '/api/bookings',
+      {
+        session: session({ anonId: 'V8' }),
+        booking: booking(),
+        pass: {
+          plate: 'WXY9999',
+          consent: true
+        }
+      }
+    );
+
+    assert.equal(accepted.status, 201);
+
+  } finally {
+    await s.close();
+  }
+});

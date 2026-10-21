@@ -19,6 +19,7 @@ import { createAgent } from './agent.js';
 import { CARS } from '../data/cars.js';
 import { START } from '../data/places.js';
 import { cleanSession, cleanBooking, cleanCheckin, cleanSharing } from './validate.js';
+import { checkCondoBooking, findAlternativeSlots } from '../engine/reservations.js';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const FILES = ['index.html', 'jmb.html', 'app.js', 'config.js', 'state.js', 'styles.css'];
@@ -51,6 +52,26 @@ export function createApp({ dataDir, secret, pins, ocmKey = '', ocppPassword = c
   const store = createStore(dataDir);
   const csms = createCsms({ store, condos: CONDOS, password: ocppPassword, now });
   const auth = createAuth({ secret, pins, now });
+  const keyHash = (key) =>
+    crypto.createHash('sha256')
+      .update(key)
+      .digest('hex');
+
+  const isResidentKey = (key, condoId) => {
+    if (
+      typeof key !== 'string' ||
+      !/^[A-Za-z0-9_-]{32}$/.test(key)
+    ) {
+      return false;
+    }
+
+    const entry = store.data.residentKeys[keyHash(key)];
+
+    return (
+      entry?.condoId === condoId &&
+      entry.expiresAt > now()
+    );
+  };
   const chargers = chargerSource({ dataDir, fetchFn, key: ocmKey, now });
   const app = express();
   app.disable('x-powered-by');
@@ -159,11 +180,62 @@ export function createApp({ dataDir, secret, pins, ocmKey = '', ocppPassword = c
     res.json({ sharing: store.data.sharing, checkins: store.data.checkins, activeBays, faultBays: out, live: csms.summaries() });
   });
 
+  app.post(
+    '/api/jmb/:condoId/resident-keys',
+    requireJmb,
+    (req, res) => {
+      const condo = condoWithSharing(req.params.condoId);
+  
+      if (!condo) {
+        return bad(res, 'Unknown condo', 404);
+      }
+  
+      const residentKey =
+        crypto.randomBytes(24).toString('base64url');
+  
+      const expiresAt = now() + 30 * 864e5;
+  
+      store.data.residentKeys[keyHash(residentKey)] = {
+        condoId: condo.id,
+        expiresAt
+      };
+  
+      store.save();
+  
+      res.status(201).json({
+        residentKey,
+        expiresAt
+      });
+    }
+  );
+
   app.post('/api/bookings', (req, res) => {
     const session = cleanSession(req.body?.session);
     if (!session) return bad(res, 'Invalid session');
+
     const booking = cleanBooking(req.body?.booking, session.chargerId);
     if (!booking) return bad(res, 'Invalid booking');
+
+    const condo = CONDOS.find(
+      c => session.chargerId === `cs-${c.id}`
+    );
+    
+    if (session.chargerId.startsWith('cs-') && !condo) {
+      return bad(res, 'Unknown residential charging site', 404);
+    }
+    
+    if (condo && session.condoId !== condo.id) {
+      return bad(res, 'Condo does not match charger');
+    }
+    
+    if (condo && session.role === 'visitor' && !req.body.pass) {
+      return bad(res, 'Visitor pass details are required');
+    }
+    
+    if (req.body.pass && (!condo || session.role !== 'visitor')) {
+      return bad(res, 'Visitor passes are only for condo visitors');
+    }
+
     const id = crypto.randomUUID();
     const cancelToken = crypto.randomBytes(16).toString('hex');
     let pass = null;
@@ -180,8 +252,56 @@ export function createApp({ dataDir, secret, pins, ocmKey = '', ocppPassword = c
       };
     }
     const d = store.data;
+
+    if (condo) {
+      const configured = condoWithSharing(condo.id);
+    
+      const availabilityArgs = {
+        condo: configured,
+        booking,
+        role: session.role,
+        existing: d.bookings,
+        faults: faultBays(
+          d.maintenance[condo.id] || [],
+          condo.bays
+        )
+      };
+
+      if (
+        condo &&
+        session.role === 'resident' &&
+        !isResidentKey(req.body?.residentKey, condo.id)
+      ) {
+        return bad(
+          res,
+          'A JMB-issued resident access key is required for this condo',
+          403
+        );
+      }
+    
+      const result = checkCondoBooking(availabilityArgs);
+    
+      if (!result.ok) {
+        const alternatives = findAlternativeSlots(
+          availabilityArgs
+        );
+    
+        return res.status(409).json({
+          error: result.error,
+          alternatives
+        });
+      }
+    }
+
     d.sessions = [...d.sessions, session].slice(-MAX_SESSIONS);
-    d.bookings.push({ id, ...booking, cancelToken, createdAt: now() });
+    d.bookings.push({
+      id,
+      ...booking,
+      role: session.role,
+      condoId: condo?.id || null,
+      cancelToken,
+      createdAt: now()
+    });
     if (pass) d.passes.push(pass);
     store.save();
     res.status(201).json({ bookingId: id, cancelToken, pass });

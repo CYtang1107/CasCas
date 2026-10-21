@@ -12,7 +12,7 @@ const DAY = 864e5;
 test('store starts empty, saves atomically and reloads', () => {
   const dir = tmp();
   const a = createStore(dir);
-  assert.deepEqual(a.data, { sharing: {}, checkins: {}, maintenance: {}, proposals: {}, sessions: [], passes: [], bookings: [] });
+  assert.deepEqual(a.data, { sharing: {}, checkins: {}, maintenance: {}, proposals: {}, residentKeys: {}, sessions: [], passes: [], bookings: [] });
   a.data.sessions.push({ at: 1 });
   a.save();
   assert.ok(!fs.existsSync(path.join(dir, 'store.json.tmp')));
@@ -25,14 +25,44 @@ test('a corrupt store file starts empty instead of crashing', () => {
   assert.deepEqual(createStore(dir).data.passes, []);
 });
 
-test('prune drops passes 30 days after the slot and bookings made over 2 days ago', () => {
+test('prune preserves advance bookings and removes expired bookings', () => {
   const s = createStore(tmp());
   const now = 100 * DAY;
-  s.data.passes = [{ id: 'old', slotEnd: now - 31 * DAY }, { id: 'new', slotEnd: now + DAY }];
-  s.data.bookings = [{ id: 'b1', createdAt: now - 3 * DAY }, { id: 'b2', createdAt: now - DAY }];
+
+  s.data.passes = [
+    { id: 'old', slotEnd: now - 31 * DAY },
+    { id: 'new', slotEnd: now + DAY }
+  ];
+
+  s.data.bookings = [
+    {
+      id: 'expired',
+      createdAt: now - 5 * DAY,
+      end: now - 3 * DAY
+    },
+    {
+      id: 'recent',
+      createdAt: now - 2 * DAY,
+      end: now - DAY
+    },
+    {
+      id: 'advance',
+      createdAt: now - 5 * DAY,
+      end: now + 3 * DAY
+    }
+  ];
+
   s.prune(now);
-  assert.deepEqual(s.data.passes.map((p) => p.id), ['new']);
-  assert.deepEqual(s.data.bookings.map((b) => b.id), ['b2']);
+
+  assert.deepEqual(
+    s.data.passes.map(p => p.id),
+    ['new']
+  );
+
+  assert.deepEqual(
+    s.data.bookings.map(b => b.id),
+    ['recent', 'advance']
+  );
 });
 
 test('PIN login gives a token for that condo only; tokens expire', () => {

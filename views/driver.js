@@ -144,7 +144,7 @@ function originPoint() {
 const placeOf = (id) => (id === 'custom' && ui.customTo
   ? { ...ui.customTo, trip: isTrip(originPoint(), ui.customTo) }
   : ALL_PLACES.find((p) => p.id === id) || PLACES[0]);
-const fresh = () => ({ carId: 'emas7', battery: 35, placeId: 'klem', homeId: '', parkFor: '30m', stage: 'pick', pick: null, flash: '', pending: null, plate: '', selected: null, prefs: noPrefs(), ask: '', askNote: '', arriveMin: 20, filters: emptyFilters(), from: null, customTo: null, locMsg: '' });
+const fresh = () => ({ carId: 'emas7', battery: 35, placeId: 'klem', homeId: '', parkFor: '30m', stage: 'pick', pick: null, flash: '', pending: null, plate: '', selected: null, prefs: noPrefs(), ask: '', askNote: '', arriveMin: 20, filters: emptyFilters(), from: null, customTo: null, locMsg: '', residentKey: '' });
 let ui = fresh();
 let map = null;
 let layer = null;
@@ -316,7 +316,9 @@ function summaryLine() {
 
 // Home: the one best charger for the current settings (or the trip), condo bays nearby, your month.
 function homeHtml(r, ctx, trip, place) {
-  const flash = ui.flash ? `<p class="flash">${esc(ui.flash)}</p>` : '';
+  const flash = ui.flash
+  ? `<p class="flash" role="alert">${esc(ui.flash)}</p>`
+  : '';
   const active = ui.stage !== 'pick' && ui.pick
     ? `<a class="banner" href="#activity">${IC.bolt}<span><b>${ui.stage === 'charging' ? 'Charging now' : 'Bay held'}</b> at ${esc(ui.pick.name)}</span><span aria-hidden="true">›</span></a>` : '';
   const head = `<div class="sec-head"><h3>${trip ? `Your trip to ${esc(place.name)}` : 'Best for you now'}</h3><a href="#plan">Change</a></div>
@@ -1077,6 +1079,24 @@ function confirmVisitor(root, ctx, ranking, car, form) {
 // Hold the bay, record the session (anonymous) and, for visitors, the plate pass.
 // Shared mode: the server saves it and approves the pass itself; nothing is confirmed until it answers.
 async function book(root, ctx, ranking, c, car, visitor) {
+
+  if (
+    ctx.api &&
+    c.condo &&
+    c.isResident &&
+    !ui.residentKey
+  ) {
+    ui.residentKey = window.prompt(
+      `Enter your JMB-issued resident access key for ${c.condo.name}:`
+    )?.trim() || '';
+  
+    if (!ui.residentKey) {
+      ui.flash = 'Resident verification is required.';
+      update(root, ctx);
+      return;
+    }
+  }
+
   const power = c.charger.type === 'DC' ? Math.min(c.charger.kw, car.dcKw) : Math.min(c.charger.kw, car.acKw);
   const session = buildSession({
     ranking, chosenId: c.charger.id, at: ctx.clock.getTime(), anonNo: anonNumber(ctx.state), resident: !!ui.homeId,
@@ -1087,11 +1107,50 @@ async function book(root, ctx, ranking, c, car, visitor) {
   let pass = null;
   let bookingRef = null;
   if (ctx.api) {
-    const r = await ctx.api.book({ session, booking: { chargerId: c.charger.id, start, end }, pass: visitor || undefined });
+    const r = await ctx.api.book({
+      session,
+      booking: {
+        chargerId: c.charger.id,
+        start,
+        end
+      },
+      pass: visitor || undefined,
+      ...(c.condo && c.isResident
+        ? { residentKey: ui.residentKey }
+        : {})
+    });
     if (!r.ok) {
-      ui.stage = 'pick'; ui.pending = null;
-      ui.flash = r.status === 0 ? 'Couldn\'t save your booking, try again.' : r.error;
-      update(root, ctx);
+      ui.stage = 'pick';
+      ui.pending = null;
+    
+      if (r.status === 403) {
+        ui.residentKey = '';
+    
+        ui.flash =
+          'Resident verification failed. Your access key is invalid or expired. Please obtain a valid key from your JMB and try again.';
+    
+      } else if (r.status === 409) {
+        ui.flash = `Booking unavailable: ${r.error}`;
+    
+        const alternatives = (r.alternatives || [])
+          .slice(0, 3)
+          .map(a =>
+            `${fmtTime(new Date(a.start))}–${fmtClock(new Date(a.end))}`
+          )
+          .join(' or ');
+    
+        if (alternatives) {
+          ui.flash += ` Suggested times: ${alternatives}.`;
+        }
+    
+      } else {
+        ui.flash = r.status === 0
+          ? "Couldn't connect to the booking server. Please try again."
+          : `Booking failed: ${r.error}`;
+      }
+    
+      // Navigate to a screen that displays the error message.
+      goActivity(root, ctx);
       return;
     }
     pass = r.data.pass || null;

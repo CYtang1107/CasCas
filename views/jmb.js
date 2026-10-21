@@ -26,6 +26,7 @@ export function renderJmb(root, ctx) {
   const charger = chargers.find((ch) => ch.condoId === condo.id);
   const start = new Date(ctx.clock.getFullYear(), ctx.clock.getMonth(), 1);
   const priv = privateSection(condo, charger, ctx);
+  const token = ctx.api ? getToken(condo.id) : null;
   const entries = priv.maintenance;
   const monthEnd = new Date(start.getFullYear(), start.getMonth() + 1, 1).getTime();
   const maintenanceRm = entries ? maintenanceCost(entries, start.getTime(), monthEnd) : 0;
@@ -140,7 +141,32 @@ export function renderJmb(root, ctx) {
         }).join('')}</tbody>
       </table></div>
     </section>
-    <div id="j-s-private">${priv.html}</div>
+    <div id="j-s-private">
+      ${priv.html}
+
+      ${ctx.api && priv.canEdit ? `
+        <section class="card">
+          <h3>Resident Access Management</h3>
+
+          <p class="muted">
+            Issue an access key only after verifying
+            that the applicant is a resident of this condominium.
+          </p>
+
+          <button
+            type="button"
+            class="btn primary"
+            id="j-issue-key">
+            Generate Resident Key
+          </button>
+
+          <p id="j-key-result"
+            class="muted"
+            aria-live="polite"
+            hidden></p>
+        </section>
+      ` : ''}
+    </div>
   </div>
   </div>`;
 
@@ -148,7 +174,6 @@ export function renderJmb(root, ctx) {
   $('#j-condo').value = condo.id;
   $('#j-condo').addEventListener('change', (e) => { if (e.target.value === 'cpo') { location.hash = '#cpo'; return; } condoId = e.target.value; history.replaceState(null, '', `#${condoId}`); ctx.rerender(); });
   root.querySelectorAll('[data-jump]').forEach((b) => b.addEventListener('click', () => document.getElementById(b.dataset.jump)?.scrollIntoView({ block: 'start' })));
-  const token = ctx.api ? getToken(condo.id) : null;
   bindProposal(root, ctx, condo, token);
   root.querySelector('#j-pause')?.addEventListener('click', async () => {
     const next = { ...s, enabled: !s.enabled };
@@ -183,6 +208,30 @@ export function renderJmb(root, ctx) {
     });
   }
   priv.bind(root);
+  const issueBtn = $('#j-issue-key');
+
+    issueBtn?.addEventListener('click', async () => {
+      issueBtn.disabled = true;
+
+      const output = $('#j-key-result');
+
+      const result = await ctx.api.issueResidentKey(
+        condo.id,
+        token
+      );
+
+      output.hidden = false;
+
+      if (result.ok) {
+        output.textContent =
+          `Resident key (copy now): ${result.data.residentKey}`;
+      } else {
+        output.textContent =
+          `Could not issue key: ${result.error}`;
+      }
+
+      issueBtn.disabled = false;
+    });
   bindMaintenance(root, condo, ctx, priv.addMaintenance);
   bindLive(root, condo, ctx);
   $('#j-report').addEventListener('click', () => {

@@ -11,7 +11,14 @@ async function call(fetchFn, method, url, body, token) {
     const res = await fetchFn(url, { method, headers, body: body === undefined ? undefined : JSON.stringify(body), signal: ctrl?.signal });
     const data = await res.json().catch(() => null);
     if (res.ok) return { ok: true, data };
-    return { ok: false, status: res.status, error: data?.error || `Request failed (${res.status})` };
+    return {
+      ok: false,
+      status: res.status,
+      error: data?.error || `Request failed (${res.status})`,
+      ...(Array.isArray(data?.alternatives)
+        ? { alternatives: data.alternatives }
+        : {})
+    };
   } catch {
     return { ok: false, status: 0, error: 'Server unavailable' };
   } finally {
@@ -32,6 +39,14 @@ export function createApi({ base = '', fetchFn = (...a) => globalThis.fetch(...a
     summary: (condoId) => call(fetchFn, 'GET', u(`condos/${id(condoId)}/summary`)),
     login: (condoId, pin) => call(fetchFn, 'POST', u('jmb/login'), { condoId, pin }),
     jmb: (condoId, token) => call(fetchFn, 'GET', u(`jmb/${id(condoId)}`), undefined, token),
+    issueResidentKey: (condoId, token) =>
+    call(
+      fetchFn,
+      'POST',
+      u(`jmb/${id(condoId)}/resident-keys`),
+      {},
+      token
+    ),
     saveSharing: (condoId, token, sharing) => call(fetchFn, 'PUT', u(`jmb/${id(condoId)}/sharing`), { sharing }, token),
     ocpp: (condoId) => call(fetchFn, 'GET', u(`ocpp/${id(condoId)}`)),
     ocppAction: (condoId, token, bay, action) => call(fetchFn, 'POST', u(`jmb/${id(condoId)}/ocpp/${Number(bay)}`), { action }, token),
