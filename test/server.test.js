@@ -22,7 +22,7 @@ async function start(opts = {}) {
     return { status: res.status, body: await res.json().catch(() => null), headers: res.headers };
   };
   const raw = (method, url, body) => fetch(base + url, { method, headers: { 'content-type': 'application/json' }, body });
-  return { call, raw, close: () => new Promise((r) => server.close(r)) };
+  return { call, raw, base, close: () => new Promise((r) => server.close(r)) };
 }
 
 const session = (extra = {}) => ({ at: WED11, anonId: 'V12', role: 'visitor', mode: 'balanced', chargerId: 'cs-lumina', condoId: 'lumina',
@@ -577,4 +577,56 @@ test('Faulty bays reduce capacity until repaired', async () => {
   } finally {
     await s.close();
   }
+});
+test('JMB can list and revoke resident keys without exposing the secret', async () => {
+  const s = await start();
+  try {
+    const login = await s.call('POST', '/api/jmb/login', { condoId: 'lumina', pin: '4821' });
+    const seriniLogin = await s.call('POST', '/api/jmb/login', { condoId: 'serini', pin: '7305' });
+    const token = login.body.token;
+    const issued = await s.call('POST', '/api/jmb/lumina/resident-keys', {}, token);
+    assert.equal(issued.status, 201);
+    assert.match(issued.body.keyId, /^[a-f0-9]{16}$/);
+    assert.equal(issued.headers.get('cache-control'), 'no-store');
+
+    assert.equal((await s.call('GET', '/api/jmb/lumina/resident-keys')).status, 401);
+    assert.equal((await s.call('GET', '/api/jmb/lumina/resident-keys', null, seriniLogin.body.token)).status, 401);
+    const listing = await s.call('GET', '/api/jmb/lumina/resident-keys', null, token);
+    assert.equal(listing.status, 200);
+    assert.equal(listing.body.keys.length, 1);
+    assert.equal(listing.body.keys[0].active, true);
+    assert.ok(!JSON.stringify(listing.body).includes(issued.body.residentKey));
+    assert.equal((await s.call('DELETE', `/api/jmb/serini/resident-keys/${issued.body.keyId}`, null, seriniLogin.body.token)).status, 404);
+
+    const access = () => s.call('POST', '/api/bookings', {
+      session: session({ role: 'resident', anonId: 'R15' }), booking: booking(),
+      residentKey: issued.body.residentKey,
+    });
+    assert.equal((await access()).status, 201);
+
+    assert.equal((await s.call('DELETE', `/api/jmb/lumina/resident-keys/${issued.body.keyId}`)).status, 401);
+    assert.equal((await s.call('DELETE', `/api/jmb/lumina/resident-keys/${issued.body.keyId}`, null, token)).status, 200);
+    assert.equal((await access()).status, 403);
+    const after = await s.call('GET', '/api/jmb/lumina/resident-keys', null, token);
+    assert.equal(after.body.keys[0].active, false);
+    assert.ok(after.body.keys[0].revokedAt != null);
+  } finally { await s.close(); }
+});
+
+test('direct-server login does not trust spoofed X-Forwarded-For values', async () => {
+  const s = await start();
+  try {
+    for (let i = 0; i < 10; i++) {
+      const r = await fetch(s.base + '/api/jmb/login', {
+        method: 'POST', headers: { 'content-type': 'application/json', 'x-forwarded-for': `198.51.100.${i + 1}` },
+        body: JSON.stringify({ condoId: 'lumina', pin: 'wrong' }),
+      });
+      assert.equal(r.status, 401);
+    }
+    const blocked = await fetch(s.base + '/api/jmb/login', {
+      method: 'POST', headers: { 'content-type': 'application/json', 'x-forwarded-for': '203.0.113.5' },
+      body: JSON.stringify({ condoId: 'lumina', pin: '4821' }),
+    });
+    assert.equal(blocked.status, 429);
+  } finally { await s.close(); }
 });

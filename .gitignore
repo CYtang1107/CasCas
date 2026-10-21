@@ -9,3 +9,4 @@ skills-lock.json
 *.md
 !README.md
 !/PILOT_READINESS.md
+!/SECURITY_AUDIT.md

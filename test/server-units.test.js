@@ -87,3 +87,24 @@ test('ten wrong PINs in 10 minutes lock that condo', () => {
   t += 10 * 60e3 + 1;
   assert.equal(auth.login('lumina', '4821').status, 200);
 });
+
+test('rate limits are scoped per JMB and client rather than locking out everyone', () => {
+  let t = 1000;
+  const auth = createAuth({ secret: 'test', pins: { lumina: '4821' }, now: () => t });
+  for (let i = 0; i < 10; i++) assert.equal(auth.login('lumina', 'no', 'attacker').status, 401);
+  assert.equal(auth.login('lumina', '4821', 'attacker').status, 429);
+  assert.equal(auth.login('lumina', '4821', 'legitimate').status, 200);
+});
+
+test('the private JSON store is never world-readable', () => {
+  const dir = tmp();
+  const storeFile = path.join(dir, 'store.json');
+  const s = createStore(dir);
+  s.data.passes.push({ plate: 'WXY1234' });
+  s.save();
+  if (process.platform !== 'win32') assert.equal(fs.statSync(storeFile).mode & 0o777, 0o600);
+  // Simulate an older data file written with a permissive umask.
+  fs.chmodSync(storeFile, 0o644);
+  createStore(dir);
+  if (process.platform !== 'win32') assert.equal(fs.statSync(storeFile).mode & 0o777, 0o600);
+});

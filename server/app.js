@@ -50,7 +50,7 @@ function chargerSource({ dataDir, fetchFn, key, now, condoSites }) {
   };
 }
 
-export function createApp({ dataDir, secret, pins, ocmKey = '', ocppPassword = crypto.randomBytes(16).toString('hex'), trafficKey = '', ai = null, fetchFn = globalThis.fetch, now = () => Date.now(), condos = CONDOS }) {
+export function createApp({ dataDir, secret, pins, ocmKey = '', ocppPassword = crypto.randomBytes(16).toString('hex'), trafficKey = '', ai = null, fetchFn = globalThis.fetch, now = () => Date.now(), condos = CONDOS, trustProxy = false }) {
   const store = createStore(dataDir);
   // The OCPP transaction context is held in the charger connection. After a
   // server restart, an interrupted session must be reviewed, not auto-billed.
@@ -82,13 +82,15 @@ export function createApp({ dataDir, secret, pins, ocmKey = '', ocppPassword = c
 
     return (
       entry?.condoId === condoId &&
-      entry.expiresAt > now()
+      entry.expiresAt > now() &&
+      entry.revokedAt == null
     );
   };
   const chargers = chargerSource({ dataDir, fetchFn, key: ocmKey, now, condoSites: condoSitesFor(condos) });
   const app = express();
   app.disable('x-powered-by');
-  app.set('trust proxy', 1); // Render sits in front: rate limits need the real client address
+  // Never trust user-supplied X-Forwarded-For by default. Opt in only behind a known proxy.
+  app.set('trust proxy', trustProxy);
   // OCPP chargers connect over WebSocket: call app.locals.attachOcpp(httpServer) after listen().
   app.locals.attachOcpp = (server) => csms.attach(server);
   app.locals.sim = null;
@@ -106,6 +108,8 @@ export function createApp({ dataDir, secret, pins, ocmKey = '', ocppPassword = c
   for (const d of DIRS) app.use(`/${d}`, express.static(path.join(ROOT, d), { setHeaders: noCache, index: false }));
 
   app.use('/api', express.json({ limit: '50kb' }));
+  // JMB responses may contain plates, resident-key metadata or bearer tokens.
+  app.use('/api/jmb', (_req, res, next) => { res.set('Cache-Control', 'no-store'); next(); });
 
   app.get('/api/health', (req, res) => res.json({ ok: true }));
   app.get('/api/config', (req, res) => res.json({ traffic: !!trafficKey, ai: !!ai?.key }));
@@ -210,17 +214,47 @@ export function createApp({ dataDir, secret, pins, ocmKey = '', ocppPassword = c
   
       store.data.residentKeys[keyHash(residentKey)] = {
         condoId: condo.id,
-        expiresAt
+        issuedAt: now(),
+        expiresAt,
+        revokedAt: null
       };
   
       store.save();
   
       res.status(201).json({
         residentKey,
+        keyId: keyHash(residentKey).slice(0, 16),
         expiresAt
       });
     }
   );
+
+  // JMB can review and revoke pilot resident credentials without retaining plaintext keys.
+  // An ID is the first 16 hex digits of a hash of a 192-bit random key; it is
+  // not an authorization credential and is visible only to this condo's JMB.
+  app.get('/api/jmb/:condoId/resident-keys', requireJmb, (req, res) => {
+    if (!condoWithSharing(req.params.condoId)) return bad(res, 'Unknown condo', 404);
+    const keys = Object.entries(store.data.residentKeys)
+      .filter(([, entry]) => entry?.condoId === req.params.condoId)
+      .map(([hash, entry]) => ({
+        keyId: hash.slice(0, 16), issuedAt: entry.issuedAt ?? null,
+        expiresAt: entry.expiresAt, revokedAt: entry.revokedAt ?? null,
+        active: entry.revokedAt == null && entry.expiresAt > now(),
+      }));
+    res.set('Cache-Control', 'no-store').json({ keys });
+  });
+
+  app.delete('/api/jmb/:condoId/resident-keys/:keyId', requireJmb, (req, res) => {
+    if (!condoWithSharing(req.params.condoId)) return bad(res, 'Unknown condo', 404);
+    const keyId = req.params.keyId;
+    if (!/^[a-f0-9]{16}$/.test(keyId)) return bad(res, 'Invalid key ID');
+    const found = Object.entries(store.data.residentKeys).find(([hash, entry]) =>
+      hash.startsWith(keyId) && entry?.condoId === req.params.condoId);
+    if (!found) return bad(res, 'Resident key not found', 404);
+    found[1].revokedAt ??= now();
+    store.save();
+    res.set('Cache-Control', 'no-store').json({ ok: true });
+  });
 
   app.post('/api/bookings', (req, res) => {
     const session = cleanSession(req.body?.session);
@@ -421,7 +455,7 @@ export function createApp({ dataDir, secret, pins, ocmKey = '', ocppPassword = c
   });
 
   app.post('/api/jmb/login', (req, res) => {
-    const r = auth.login(String(req.body?.condoId || ''), String(req.body?.pin || ''));
+    const r = auth.login(String(req.body?.condoId || ''), String(req.body?.pin || ''), req.ip);
     if (r.status === 429) return bad(res, 'Too many tries. Wait 10 minutes.', 429);
     if (r.status !== 200) return bad(res, 'Wrong PIN.', 401);
     res.json({ token: r.token, expiresAt: r.expiresAt });

@@ -18,6 +18,7 @@ const app = createApp({
   dataDir: process.env.DATA_DIR || fileURLToPath(new URL('./data', import.meta.url)),
   secret: process.env.JMB_SECRET || crypto.randomBytes(32).toString('hex'),
   pins,
+  trustProxy: process.env.TRUST_PROXY === '1' ? 1 : false,
   ocmKey: process.env.OCM_KEY || '',
   ocppPassword,
   trafficKey: process.env.TOMTOM_KEY || '',
