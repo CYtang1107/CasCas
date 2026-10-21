@@ -19,8 +19,8 @@ export function renderCpo(root, ctx) {
   root.innerHTML = `
   <div class="jmb cpo">
     <div class="view-head">
-      <div><p class="eyebrow">Charging partner (CPO) view · ${esc(start.toLocaleString('en-MY', { month: 'long', year: 'numeric' }))}</p>
-        <h2>All condo sites</h2>
+      <div><h1>All condo sites</h1>
+        <p class="context-line">Charging partner (CPO) view · ${esc(start.toLocaleString('en-MY', { month: 'long', year: 'numeric' }))}</p>
         <p class="muted">The CPO installs, runs and insures the chargers and keeps ${cpoPct}% of each site's operating surplus; the JMB keeps the rest for its maintenance fund.</p></div>
       <label class="field inline">View <select id="c-view"><option value="cpo">CPO: all sites</option>${condos.map((c) => `<option value="${c.id}">JMB: ${esc(c.name)}</option>`).join('')}</select></label>
     </div>

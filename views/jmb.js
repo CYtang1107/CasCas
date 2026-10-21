@@ -58,8 +58,8 @@ export function renderJmb(root, ctx) {
   <nav class="side" aria-label="Dashboard sections">${SECTIONS.map(([id, l]) => `<button type="button" data-jump="${id}">${l}</button>`).join('')}</nav>
   <div class="jmb">
     <div class="view-head">
-      <div><p class="eyebrow">JMB dashboard · ${esc(start.toLocaleString('en-MY', { month: 'long', year: 'numeric' }))}</p>
-        <h2>${esc(condo.name)}</h2>
+      <div><h1>${esc(condo.name)}</h1>
+        <p class="context-line">JMB dashboard · ${esc(start.toLocaleString('en-MY', { month: 'long', year: 'numeric' }))}</p>
         <p class="muted">${condo.units} units · ${condo.bays} charging bays · the JMB keeps ${pct(condo.jmbShare)} of the margin, the charging partner keeps the rest</p></div>
       <label class="field inline">Condo <select id="j-condo"><option value="cpo">CPO: all sites</option>${condos.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select></label>
     </div>
@@ -77,7 +77,7 @@ export function renderJmb(root, ctx) {
         <p class="muted">Shaded hours are TNB peak (weekdays 2–10 PM). Residents charge in the evening; outside drivers fill the bays they leave empty during the day.</p>
         ${quietHtml(condo, charger, sim)}
       </section>
-      <section class="card"><h3>Charging income, last 6 months</h3>
+      <section class="card"><h3>Illustrative income over 6 months</h3>
         ${lineChart({ labels: months, series: [
           { label: 'From residents', values: rampSeries(sim.residentRevenue), cls: 'la' },
           { label: 'From outside drivers', values: rampSeries(sim.visitorRevenue), cls: 'lb' },
