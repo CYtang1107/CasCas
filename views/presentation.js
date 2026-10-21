@@ -19,10 +19,16 @@ document.addEventListener('focusin', (event) => {
 document.addEventListener('click', (event) => {
   if (event.target.closest('.skip-link')) { event.preventDefault(); view.focus(); return; }
   if (event.target.closest('[data-close]')) view.querySelector('#d-map')?.focus({ preventScroll: true });
-  const control = event.target.closest('[data-sheet-size], [data-detail-size]');
+  const control = event.target.closest('[data-detail-size]');
   if (!control) return;
-  const detail = control.hasAttribute('data-detail-size');
-  sizes[detail ? 'detail' : 'recommendations'] = detail ? control.dataset.detailSize : control.dataset.sheetSize;
+  sizes.detail = control.dataset.detailSize;
+  decorate();
+});
+
+document.addEventListener('change', (event) => {
+  const control = event.target.closest('select[data-sheet-size]');
+  if (!control) return;
+  sizes.recommendations = control.value;
   decorate();
 });
 
@@ -32,14 +38,17 @@ document.addEventListener('keydown', (event) => {
   if (tools) { tools.open = false; tools.querySelector('summary').focus(); }
   if (event.target.closest('.recommendation-sheet')) {
     sizes.recommendations = 'medium'; decorate();
-    view.querySelector('[data-sheet-size="medium"]')?.focus();
+    view.querySelector('select[data-sheet-size]')?.focus();
   }
 });
 
 function setSize(panel, value, attribute) {
   if (!panel) return;
   if (panel.dataset.sheet !== value) panel.dataset.sheet = value;
+  const select = panel.querySelector(`select[${attribute}]`);
+  if (select && select.value !== value) select.value = value;
   panel.querySelectorAll(`[${attribute}]`).forEach((button) => {
+    if (button === select) return;
     const pressed = String(button.getAttribute(attribute) === value);
     if (button.getAttribute('aria-pressed') !== pressed) button.setAttribute('aria-pressed', pressed);
     if (button.getAttribute(attribute) === 'expanded') {

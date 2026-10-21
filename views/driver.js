@@ -178,6 +178,7 @@ export function renderDriver(root, ctx, which = 'home') {
   const mapRow = (cls) => `<div class="map-row ${cls}" id="d-map-row">
       <section class="map-wrap">
         <div id="d-map" class="map" aria-label="Map of chargers around KL East. Select a charger for details."></div>
+        <button type="button" class="round map-focus" data-map-focus aria-label="Recenter map on your location" title="Recenter map on your location">${IC.locate}</button>
         <p id="d-map-fallback" class="notice" hidden>The map could not load. <a href="#plan">Browse the charger list</a> to find and book a bay.</p>
       </section>
       <aside id="d-detail" class="panel detail" aria-label="Charger details" aria-live="polite" hidden></aside>
@@ -262,11 +263,13 @@ export function renderDriver(root, ctx, which = 'home') {
     <div class="charging-workspace">
     ${mapRow('compact')}
     <aside class="recommendation-sheet" data-sheet="medium" aria-label="Charging recommendations">
-      <div class="sheet-toolbar"><span>Charge options</span><div class="sheet-sizes" role="group" aria-label="Recommendation panel size">
-        <button type="button" data-sheet-size="compact" aria-pressed="false" aria-label="Compact recommendations">Compact</button>
-        <button type="button" data-sheet-size="medium" aria-pressed="true" aria-label="Browse recommendations">Browse</button>
-        <button type="button" data-sheet-size="expanded" aria-pressed="false" aria-label="Expand recommendations">Expand</button>
-      </div></div>
+      <div class="sheet-toolbar"><span>Charge options</span><label class="sheet-sizes"><span class="sr-only">Recommendation view</span>
+        <select data-sheet-size aria-label="Recommendation view" aria-controls="d-results">
+          <option value="compact">Compact</option>
+          <option value="medium" selected>Browse</option>
+          <option value="expanded">Expanded</option>
+        </select>
+      </label></div>
       <section class="results" id="d-results" aria-live="polite"></section>
     </aside></div>
   </div>`;
@@ -306,6 +309,13 @@ export function renderDriver(root, ctx, which = 'home') {
   }
 
   if ($('#d-map')) initMap($('#d-map'), $('#d-map-fallback'));
+  $('[data-map-focus]')?.addEventListener('click', () => {
+    if (!map) return;
+    const origin = originPoint();
+    map.invalidateSize();
+    map.setView([origin.lat, origin.lng], 15);
+    $('#d-map').focus({ preventScroll: true });
+  });
   if (map && trafficOn) setTraffic(true);
   if (map && incidentsOn) refreshIncidentLayer();
   map?.on('moveend', () => { clearTimeout(incTimer); incTimer = setTimeout(refreshIncidentLayer, 600); });
