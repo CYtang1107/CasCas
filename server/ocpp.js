@@ -24,7 +24,8 @@ function passwordOk(header, id, password) {
 export function createCsms({ store, condos, password, now = () => Date.now() }) {
   const points = new Map(); // id -> live state
   const pending = new Map(); // our CALL id -> resolve
-  let txSeq = 1;
+  // Sequence is persisted in the store so reconnects/restarts cannot reuse
+  // OCPP transaction ids from previously settled charging sessions.
   const hashTag = (tag) => crypto.createHash('sha256').update(tag).digest('hex');
   const activeTag = (p, idTag) => store.data.chargingSessions.find(s =>
     s.tagHash === hashTag(idTag) && s.condoId === p.condoId && s.bay === p.bay &&
@@ -86,7 +87,13 @@ export function createCsms({ store, condos, password, now = () => Date.now() }) 
           (matched && (!Number.isFinite(meterStart) || meterStart < 0))) {
         return { transactionId: -1, idTagInfo: { status: 'Invalid' } };
       }
-      p.txId = txSeq++;
+      if (!Number.isSafeInteger(store.data.nextOcppTransactionId) ||
+          store.data.nextOcppTransactionId >= Number.MAX_SAFE_INTEGER)
+        return { transactionId: -1, idTagInfo: { status: 'Invalid' } };
+      p.txId = store.data.nextOcppTransactionId++;
+      // Persist allocation before acknowledging StartTransaction, including
+      // non-booked simulator activity. Prevents id reuse after a restart.
+      store.save();
       p.energyWh = Number.isFinite(meterStart) && meterStart >= 0 ? meterStart : 0;
       p.sessionStartWh = p.energyWh;
       p.linkedSessionId = matched?.id || null;

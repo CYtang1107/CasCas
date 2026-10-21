@@ -1,0 +1,47 @@
+CasSama — Booking-linked OCPP revenue reconciliation (GreenGru proposal §1.4.2 and §6.2)
+==========================================================================================
+
+What's new
+- OCPP transaction ids are allocated from a persistent counter (nextOcppTransactionId)
+  so a server restart does not reuse previously issued ids.
+- Completed charging records are checked again at reporting time against stored OCPP
+  start/stop meter readings, price and calculated receipts.
+- Duplicate session ids, booking ids, or OCPP transaction ids are detected globally.
+  Potentially duplicated completed records are ALL excluded from financial totals and
+  shown as reconciliation issues until reviewed; no automatic billing/adjustment.
+- Previously existing needs_review sessions are also surfaced in the monthly report.
+
+API (same endpoint; additive response fields)
+GET /api/jmb/:condoId/charging-revenue?month=YYYY-MM
+Authorization: Bearer <JMB login token>
+
+Existing keys (sessions, financials, sessionCount, costAssumptions) are unchanged.
+New key:
+  "reconciliation": {
+    "reviewCount": 0,
+    "excludedCompletedCount": 0,
+    "items": [{ "id": "...", "bookingId": "...", "bay": 1, "reason": "..." }]
+  }
+
+Only validated completed booking-linked charging records contribute to financials.
+Unlinked simulator transactions are never included. The report is JMB-token protected
+and does not include vehicle plates, raw resident keys, cancel tokens or OCPP idTags.
+
+Review reason examples: duplicate_transaction, invalid_meter_or_amount,
+invalid_meter_or_time_order, inconsistent_meter_or_pricing,
+Charger disconnected before StopTransaction.
+
+Finance caveat: "revenue" is a calculated charging receipt, NOT a confirmed payment.
+Electricity/variable/fixed costs and JMB share are illustrative, as stated in the
+GreenGru proposal; this is neither an invoicing nor audited accounting system.
+
+Testing
+npm test
+node --test test/charging-lifecycle.test.js test/server-units.test.js
+
+Operational notes
+- Existing stores load and the transaction-id counter is inferred from their ledger.
+- Old transaction-id collisions (from earlier server versions) are flagged for review.
+- No automatic correction of reviewed records or payment collection has been added.
+- Actual historical settlements and cost assumptions should be audited before
+  using this for real JMB disbursements.

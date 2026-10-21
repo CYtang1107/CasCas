@@ -115,3 +115,7 @@ Without the PIN, the JMB tab shows income and totals only. Plates, the session l
     npm test
 
 Engine modules (`engine/`) are pure and covered by `node --test`.
+
+## Four-charger pilot verification
+
+Run `npm run pilot:verify` for an isolated end-to-end four-AC-bay test of resident-protected visitor sharing, booking-linked OCPP charging, meter-based receipts and the JMB reconciliation report. The test does **not** change normal app data or connect to physical chargers. See [`PILOT_READINESS.md`](PILOT_READINESS.md) for assumptions, expected evidence and the proposal-aligned demonstration/approval checklist.

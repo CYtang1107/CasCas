@@ -221,3 +221,67 @@ test('an interrupted charge is marked for review, never silently billed', async 
     assert.equal(report.sessionCount, 0);
   } finally { await reload.close(); }
 });
+
+test('reconciliation excludes duplicate OCPP records rather than double-counting them', () => {
+  const record = {
+    id: 'session-a', bookingId: 'booking-a', condoId: 'lumina', status: 'completed',
+    bay: 1, transactionId: 50, role: 'visitor', startedAt: WED11,
+    endedAt: WED11 + 60000, meterStartWh: 1000, meterStopWh: 6000,
+    energyKwh: 5, priceRmPerKwh: 0.90, revenueRm: 4.50, electricityCostRm: 2.75,
+  };
+  const common = { condo: CONDOS.find(c => c.id === 'lumina'), maintenance: [], month: '2026-10' };
+  const clean = chargingRevenueReport({ ...common, sessions: [record] });
+  assert.equal(clean.sessionCount, 1);
+  assert.equal(clean.financials.revenue, 4.5);
+  assert.equal(clean.reconciliation.reviewCount, 0);
+
+  const duplicate = chargingRevenueReport({ ...common, sessions: [record, { ...record, id: 'session-b' }] });
+  assert.equal(duplicate.sessionCount, 0);
+  assert.equal(duplicate.financials.revenue, 0);
+  assert.equal(duplicate.reconciliation.reviewCount, 2);
+  assert.equal(duplicate.reconciliation.excludedCompletedCount, 2);
+  assert.ok(duplicate.reconciliation.items.every(i => i.reason === 'duplicate_transaction'));
+});
+
+test('reconciliation catches edited meter totals and does not bill incomplete sessions', () => {
+  const record = {
+    id: 'session-1', bookingId: 'booking-1', condoId: 'lumina', status: 'completed',
+    bay: 3, transactionId: 79, role: 'resident', startedAt: WED11,
+    endedAt: WED11 + 60000, meterStartWh: 1000, meterStopWh: 6000,
+    energyKwh: 5, priceRmPerKwh: 0.90, revenueRm: 9, electricityCostRm: 2.75,
+  };
+  const review = { id: 'session-2', bookingId: 'booking-2', condoId: 'lumina',
+    status: 'needs_review', bay: 4, startedAt: WED11,
+    reviewReason: 'Charger disconnected before StopTransaction' };
+  const report = chargingRevenueReport({ sessions: [record, review],
+    condo: CONDOS.find(c => c.id === 'lumina'), maintenance: [], month: '2026-10' });
+  assert.equal(report.sessionCount, 0);
+  assert.equal(report.financials.kWh, 0);
+  assert.equal(report.financials.revenue, 0);
+  assert.equal(report.reconciliation.reviewCount, 2);
+  assert.equal(report.reconciliation.excludedCompletedCount, 1);
+  assert.ok(report.reconciliation.items.some(i => i.reason === 'inconsistent_meter_or_pricing'));
+  assert.ok(report.reconciliation.items.some(i => i.reason.includes('disconnected')));
+  assert.ok(!JSON.stringify(report).includes('tagHash'));
+});
+
+test('OCPP transaction identifiers remain unique across server restarts', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cassama-transaction-sequence-'));
+  const clock = { t: WED11 + 5 * 60000 };
+  const first = await setup({ dir, clock });
+  let firstId;
+  try {
+    const charger = await first.charger(1);
+    const started = await charger.rpc('StartTransaction', { idTag: 'CASSAMA', meterStart: 100 });
+    firstId = started[2].transactionId;
+    assert.ok(firstId > 0);
+    await charger.rpc('StopTransaction', { transactionId: firstId, meterStop: 200 });
+  } finally { await first.close(); }
+  const second = await setup({ dir, clock });
+  try {
+    const charger = await second.charger(1);
+    const started = await charger.rpc('StartTransaction', { idTag: 'CASSAMA', meterStart: 200 });
+    assert.ok(started[2].transactionId > firstId);
+    await charger.rpc('StopTransaction', { transactionId: started[2].transactionId, meterStop: 300 });
+  } finally { await second.close(); }
+});

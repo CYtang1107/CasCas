@@ -6,6 +6,7 @@
   "description": "CasSama prototype: shared EV charging for SDP townships",
   "scripts": {
     "test": "node --test",
+    "pilot:verify": "node --test test/pilot-readiness.test.js",
     "start": "node server/index.js"
   },
   "dependencies": {

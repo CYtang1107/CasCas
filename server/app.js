@@ -5,6 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
 import { CONDOS } from '../data/condos.js';
+import { condoSitesFor } from '../data/chargers.js';
 import { loadChargers } from '../data/ocm.js';
 import { normalisePlate, isValidPlate, canAutoApprove, createPass } from '../engine/access.js';
 import { validateSharing } from '../engine/sharing.js';
@@ -31,7 +32,7 @@ const MAX_CHECKINS = 200;
 const noCache = (res) => res.setHeader('Cache-Control', 'no-cache');
 
 // Open Charge Map through the server: the key stays here. Live results are kept 24 h, fallbacks 10 min.
-function chargerSource({ dataDir, fetchFn, key, now }) {
+function chargerSource({ dataDir, fetchFn, key, now, condoSites }) {
   const file = path.join(dataDir, 'ocm.json');
   const storage = {
     getItem: () => { try { return fs.readFileSync(file, 'utf8'); } catch { return null; } },
@@ -43,13 +44,13 @@ function chargerSource({ dataDir, fetchFn, key, now }) {
     const t = now();
     const ttl = last?.source === 'live' ? 24 * 3600e3 : 10 * 60e3;
     if (last && t - at < ttl) return last;
-    last = await loadChargers({ fetchFn, storage, now: t, key });
+    last = await loadChargers({ fetchFn, storage, now: t, key, condoSites });
     at = t;
     return last;
   };
 }
 
-export function createApp({ dataDir, secret, pins, ocmKey = '', ocppPassword = crypto.randomBytes(16).toString('hex'), trafficKey = '', ai = null, fetchFn = globalThis.fetch, now = () => Date.now() }) {
+export function createApp({ dataDir, secret, pins, ocmKey = '', ocppPassword = crypto.randomBytes(16).toString('hex'), trafficKey = '', ai = null, fetchFn = globalThis.fetch, now = () => Date.now(), condos = CONDOS }) {
   const store = createStore(dataDir);
   // The OCPP transaction context is held in the charger connection. After a
   // server restart, an interrupted session must be reviewed, not auto-billed.
@@ -62,7 +63,7 @@ export function createApp({ dataDir, secret, pins, ocmKey = '', ocppPassword = c
     }
   }
   if (interrupted) store.save();
-  const csms = createCsms({ store, condos: CONDOS, password: ocppPassword, now });
+  const csms = createCsms({ store, condos, password: ocppPassword, now });
   const auth = createAuth({ secret, pins, now });
   const keyHash = (key) =>
     crypto.createHash('sha256')
@@ -84,7 +85,7 @@ export function createApp({ dataDir, secret, pins, ocmKey = '', ocppPassword = c
       entry.expiresAt > now()
     );
   };
-  const chargers = chargerSource({ dataDir, fetchFn, key: ocmKey, now });
+  const chargers = chargerSource({ dataDir, fetchFn, key: ocmKey, now, condoSites: condoSitesFor(condos) });
   const app = express();
   app.disable('x-powered-by');
   app.set('trust proxy', 1); // Render sits in front: rate limits need the real client address
@@ -93,7 +94,7 @@ export function createApp({ dataDir, secret, pins, ocmKey = '', ocppPassword = c
   app.locals.sim = null;
 
   const condoWithSharing = (id) => {
-    const c = CONDOS.find((x) => x.id === id);
+    const c = condos.find((x) => x.id === id);
     return c ? { ...c, sharing: { ...c.sharing, ...(store.data.sharing[id] || {}) } } : null;
   };
   const bad = (res, error, status = 400) => res.status(status).json({ error });
@@ -122,10 +123,10 @@ export function createApp({ dataDir, secret, pins, ocmKey = '', ocppPassword = c
     const origin = lat > 0.5 && lat < 7.5 && lng > 99 && lng < 120 ? { lat, lng, name: String(c.originName || 'your location').slice(0, 60) } : { ...START, name: 'KL East' };
     const t = new Date(c.clock);
     const clock = Number.isNaN(t.getTime()) ? new Date(now()) : t;
-    const home = CONDOS.find((x) => x.id === c.homeId) || null;
+    const home = condos.find((x) => x.id === c.homeId) || null;
     const history = Array.isArray(b.history) ? b.history.slice(-6) : [];
     try {
-      const world = { chargers: (await chargers()).chargers, condos: CONDOS.map((x) => condoWithSharing(x.id)) };
+      const world = { chargers: (await chargers()).chargers, condos: condos.map((x) => condoWithSharing(x.id)) };
       const env = { world, car, origin, clock, homeId: home?.id || null, parkFor: c.parkFor, prefs: c.prefs || {} };
       res.json(await agent.ask({ text, history, env, context: { clock, carName: car.name, originName: origin.name, homeName: home?.name } }));
     } catch (e) {
@@ -185,7 +186,7 @@ export function createApp({ dataDir, secret, pins, ocmKey = '', ocppPassword = c
     const activeBays = {};
     for (const b of store.data.bookings) if (b.start <= at && at < b.end) activeBays[b.chargerId] = (activeBays[b.chargerId] || 0) + 1;
     const out = {};
-    for (const c of CONDOS) {
+    for (const c of condos) {
       const n = faultBays(store.data.maintenance[c.id] || [], c.bays);
       if (n) out[`cs-${c.id}`] = n;
     }
@@ -228,7 +229,7 @@ export function createApp({ dataDir, secret, pins, ocmKey = '', ocppPassword = c
     const booking = cleanBooking(req.body?.booking, session.chargerId);
     if (!booking) return bad(res, 'Invalid booking');
 
-    const condo = CONDOS.find(
+    const condo = condos.find(
       c => session.chargerId === `cs-${c.id}`
     );
     
