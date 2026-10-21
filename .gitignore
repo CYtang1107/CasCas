@@ -2,3 +2,9 @@ node_modules/
 .DS_Store
 .superpowers/
 server/data/
+docs/CasSama-UIUX-Agent-Prompts/*.md
+.agents/skills/*
+docs/*.md
+skills-lock.json
+*.md
+!README.md

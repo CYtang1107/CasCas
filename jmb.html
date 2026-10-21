@@ -4,19 +4,25 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>CasSama for JMBs</title>
+  <link rel="icon" type="image/png" href="design/logo.png">
+  <link rel="apple-touch-icon" href="design/logo.png">
   <meta name="description" content="CasSama JMB portal: shared charging income, cost recovery, live chargers, maintenance and visitor access for condo management.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <meta name="theme-color" content="#F5F3EC">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Familjen+Grotesk:wght@400;500;600;700&family=Public+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body data-app="jmb" class="portal-page">
+  <a class="skip-link" href="#view">Skip to main content</a>
   <header class="top">
     <div class="brand">
-      <svg class="logo" viewBox="0 0 24 24" aria-hidden="true"><path d="M13 2 4 14h6l-1 8 9-12h-6z"/></svg>
-      <div><b><span data-app-name>CasSama</span> <span class="portal-tag">JMB portal</span></b><small>Condo management · charging income and operations</small></div>
+      <img class="logo" src="design/logo.png" width="44" height="44" alt="">
+      <div><b><span data-app-name>CasSama</span> <span class="portal-tag">Operations</span></b><small>Condo management · charging income and operations</small></div>
     </div>
     <a class="btn small app-switch" href="./">Open the driver app</a>
+    <details class="demo-tools"><summary>Demo tools</summary><div class="demo-panel">
     <p id="data-source" class="source" aria-live="polite">Chargers: loading…</p>
     <p id="data-mode" class="source"></p>
     <div class="clock">
@@ -24,13 +30,15 @@
       <select id="clock-preset"></select>
       <input id="clock-custom" type="datetime-local" hidden aria-label="Custom demo time">
     </div>
+    </div></details>
   </header>
-  <main id="view"></main>
+  <main id="view" tabindex="-1"></main>
   <footer class="foot">
     <span>Prototype for the Sime Darby Property University Hackathon 2026. Condo bays, occupancy and history are simulated; condo names are fictional.</span>
     <button id="reset" class="btn small" type="button">Reset demo</button>
   </footer>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script type="module" src="app.js"></script>
+  <script type="module" src="views/presentation.js"></script>
 </body>
 </html>

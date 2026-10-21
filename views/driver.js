@@ -178,7 +178,8 @@ export function renderDriver(root, ctx, which = 'home') {
   const mapRow = (cls) => `<div class="map-row ${cls}" id="d-map-row">
       <section class="map-wrap">
         <div id="d-map" class="map" aria-label="Map of chargers around KL East. Select a charger for details."></div>
-        <p id="d-map-fallback" class="notice" hidden>The map could not load. The list of picks still works.</p>
+        <button type="button" class="round map-focus" data-map-focus aria-label="Recenter map on your location" title="Recenter map on your location">${IC.locate}</button>
+        <p id="d-map-fallback" class="notice" hidden>The map could not load. <a href="#plan">Browse the charger list</a> to find and book a bay.</p>
       </section>
       <aside id="d-detail" class="panel detail" aria-label="Charger details" aria-live="polite" hidden></aside>
     </div>`;
@@ -194,8 +195,9 @@ export function renderDriver(root, ctx, which = 'home') {
     root.innerHTML = `
     <div class="driver tab-home">
       <section class="hello">
-        <p class="eyebrow">${esc(greeting(ctx.clock))} · ${esc(fmtTime(ctx.clock))}</p>
-        <h2>Where are you charging today?</h2>
+        <h1>Find your<br>next charge.</h1>
+        <p class="context-line">${esc(greeting(ctx.clock))} · ${esc(fmtTime(ctx.clock))}</p>
+        <p class="hello-copy">Find your next charge, close to home or along the way.</p>
         ${askForm(true)}
         <div id="d-chat">${chatHtml()}</div>
       </section>
@@ -209,6 +211,7 @@ export function renderDriver(root, ctx, which = 'home') {
     </div>`;
   } else if (which === 'map') {
     root.innerHTML = `<div class="driver tab-map">
+      <div class="map-title"><h1>Explore chargers</h1><p class="muted">Select a pin to see the details and book.</p></div>
       <button type="button" class="msearch" data-sopen>${IC.search}<span>Search chargers or places</span></button>
       <div class="map-filters" role="group" aria-label="Filter chargers">${filterBarHtml()}</div>
       <section class="search-screen" id="d-search" aria-label="Search chargers" hidden></section>
@@ -216,12 +219,14 @@ export function renderDriver(root, ctx, which = 'home') {
       ${mapRow('full')}
       <p class="map-hint">${esc(trip)} · <a href="#plan">Change</a></p></div>`;
   } else if (which === 'activity') {
-    root.innerHTML = '<div class="driver tab-activity"><section class="panel" id="d-activity" aria-live="polite"></section></div>';
+    root.innerHTML = '<div class="driver tab-activity"><h1 class="sr-only">Activity</h1><section class="panel" id="d-activity" aria-label="Booking and charging activity"></section></div>';
   } else {
     root.innerHTML = `
   <div class="driver tab-plan">
+    <header class="plan-heading"><h1>Your next charge.</h1><p class="muted">A nearby bay or a stop along the way. Your journey, considered.</p></header>
+    <details class="trip-preferences" data-preferences><summary><span>Trip preferences</span><span class="preference-summary">${esc(trip)}</span>${IC.filter}</summary>
     <section class="plan-form" aria-label="Trip">
-      <h2>Plan</h2>
+      <h2 class="sr-only">Plan</h2>
       <div class="segmented" role="group" aria-label="Plan type">
         <button type="button" data-seg="nearby" aria-pressed="${!placeOf(ui.placeId).trip}">Charge nearby</button>
         <button type="button" data-seg="trip" aria-pressed="${!!placeOf(ui.placeId).trip}">Long trip</button>
@@ -254,9 +259,19 @@ export function renderDriver(root, ctx, which = 'home') {
           <label class="field">Preferred operator <select id="d-op"><option value="">Any</option>${OPERATORS.map((o) => `<option>${o}</option>`).join('')}</select></label>
         </div>
       </details>
-    </section>
+    </section></details>
+    <div class="charging-workspace">
     ${mapRow('compact')}
-    <section class="panel results" id="d-results" aria-live="polite"></section>
+    <aside class="recommendation-sheet" data-sheet="medium" aria-label="Charging recommendations">
+      <div class="sheet-toolbar"><span>Charge options</span><label class="sheet-sizes"><span class="sr-only">Recommendation view</span>
+        <select data-sheet-size aria-label="Recommendation view" aria-controls="d-results">
+          <option value="compact">Compact</option>
+          <option value="medium" selected>Browse</option>
+          <option value="expanded">Expanded</option>
+        </select>
+      </label></div>
+      <section class="results" id="d-results" aria-live="polite"></section>
+    </aside></div>
   </div>`;
   }
 
@@ -294,6 +309,13 @@ export function renderDriver(root, ctx, which = 'home') {
   }
 
   if ($('#d-map')) initMap($('#d-map'), $('#d-map-fallback'));
+  $('[data-map-focus]')?.addEventListener('click', () => {
+    if (!map) return;
+    const origin = originPoint();
+    map.invalidateSize();
+    map.setView([origin.lat, origin.lng], 15);
+    $('#d-map').focus({ preventScroll: true });
+  });
   if (map && trafficOn) setTraffic(true);
   if (map && incidentsOn) refreshIncidentLayer();
   map?.on('moveend', () => { clearTimeout(incTimer); incTimer = setTimeout(refreshIncidentLayer, 600); });
@@ -398,7 +420,7 @@ function accountHtml(ctx) {
   return `
     <section class="profile">
       <div class="avatar" aria-hidden="true">${esc(initials(name))}</div>
-      <h2>${esc(name)}</h2>
+      <h1>${esc(name)}</h1>
       <button type="button" class="pill-btn" data-a="name">Edit name</button>
       <div class="pstats"><div><span>Output (kWh)</span><b>${kWh.toFixed(1)}</b></div><div><span>Sessions</span><b>${sessions.length}</b></div><div><span>CO₂ avoided (kg)</span><b>${Math.round(co2Kg(kWh))}</b></div></div>
     </section>
@@ -423,7 +445,7 @@ function accountHtml(ctx) {
     <h3 class="agroup">General</h3>
     <div class="alist">
       <label class="arow">${IC.clock}<span>Notifications <small class="muted">${esc(notifyNote(p))}</small></span><input type="checkbox" class="switch" id="a-notify" ${p.notify && notifyState() === 'granted' ? 'checked' : ''} ${notifyState() === 'unsupported' ? 'disabled' : ''}></label>
-      <label class="arow">${IC.sun}<span>Dark theme</span><input type="checkbox" class="switch" id="a-theme" ${p.theme === 'dark' ? 'checked' : ''}></label>
+      <label class="arow">${IC.sun}<span>Deeper night theme</span><input type="checkbox" class="switch" id="a-theme" ${p.theme === 'dark' ? 'checked' : ''}></label>
       ${row('help', 'Help and FAQ', '', 'data-a="faq"')}
       ${row('shield', 'Privacy', '', 'data-a="privacy"')}
       ${row('doc', 'Terms of the demo', '', 'data-a="terms"')}
@@ -888,8 +910,7 @@ const facts = (c) => `<div class="facts">${availChip(c.charger, c.occupancy)}
 function heroCard(c) {
   return `
     <article class="pick hero">
-      <div class="hero-art">${siteArt(c.charger, c.charger.name)}</div>
-      <div class="hero-tags"><span class="eyebrow-tag">CasSama pick</span>${c.isSharedVisit ? '<span class="chip amber-tag">Shared now</span>' : ''}${c.isResident ? `<span class="chip">${IC.home}Your condo</span>` : ''}</div>
+      <div class="hero-tags">${c.isSharedVisit ? '<span class="chip amber-tag">Shared now</span>' : ''}${c.isResident ? `<span class="chip">${IC.home}Your condo</span>` : ''}</div>
       <h3>${esc(c.charger.name)}</h3>
       <p class="muted">${esc(c.charger.operator)} · ${esc(c.charger.connectors.join(', '))}</p>
       <div class="facts">${availChip(c.charger, c.occupancy)}<span>${IC.pin}${c.km < 1 ? `${Math.round(c.km * 1000)} m` : `${c.km.toFixed(1)} km`}</span><span>${IC.bolt}${c.charger.kw} kW</span></div>
@@ -936,14 +957,20 @@ function pickHtml(r, ctx) {
     : '';
   const own = r.results.find((c) => c.isResident) || top[0];
   const timing = timingLine(own, ctx, own.full ? own.kWh : own.deliveredKwh);
-  return head + note + timing + `<div class="picks">${cards}</div>` + compareHtml(r) + more + off;
+  return head + `<div class="picks">${cards}</div>` + timing + note + compareHtml(r) + more + off;
+}
+
+function journeyHtml(stage) {
+  const active = { plate: 0, booked: 1, charging: 2, done: 3 }[stage];
+  return `<ol class="journey" aria-label="Charging stages">${['Choose', 'Bay held', 'Charging', 'Check-in'].map((label, i) => `<li ${i === active ? 'aria-current="step"' : ''} class="${i < active ? 'complete' : ''}"><span aria-hidden="true">${i + 1}</span>${label}</li>`).join('')}</ol>`;
 }
 
 function stageHtml(ctx, r) {
   const p = ui.pick;
+  const journey = journeyHtml(ui.stage);
   if (ui.stage === 'plate') {
     const c = r.results.find((x) => x.charger.id === ui.pending);
-    return `<h2>Visitor details</h2>
+    return `${journey}<h2>Visitor details</h2>
       <p><b>${esc(c ? c.charger.name : 'This bay')}</b> is a shared condo bay. The condo's management lets visitors in by number plate.</p>
       <form id="d-plate-form" class="form" novalidate>
         <label class="field">Number plate <input id="d-plate" type="text" autocomplete="off" autocapitalize="characters" maxlength="12" placeholder="e.g. WXY 1234" value="${esc(ui.plate)}"></label>
@@ -958,12 +985,12 @@ function stageHtml(ctx, r) {
     const pass = p.pass
       ? `<p class="approved"><b>Approved.</b> Show plate <b>${esc(formatPlate(p.pass.plate))}</b> at the guardhouse, ${esc(fmtTime(new Date(p.pass.slotStart)))} to ${esc(fmtClock(new Date(p.pass.slotEnd)))}.</p>`
       : '';
-    return `<h2>Bay held</h2>
+    return `${journey}<h2>Bay held</h2>
       ${pass}
       <p class="saved">${esc(savingLine(p))}</p>
       <p><b>${esc(p.name)}</b> is held for you for ${CONST.holdMinutes} minutes, until ${esc(fmtTime(until))}.</p>
       ${qrSvg(p.chargerId)}
-      <p class="muted">At the bay, scan the QR code on the charger to start.</p>
+      <p class="muted">Demo QR illustration. At the bay, scan the code on the charger to start.</p>
       <div class="btn-row"><button class="btn primary" type="button" data-act="start">Scan QR and start charging</button>
       <button class="btn" type="button" data-act="cancel">Cancel booking</button></div>`;
   }
@@ -973,7 +1000,7 @@ function stageHtml(ctx, r) {
     const C = 2 * Math.PI * 102;
     const left = Math.max(0, ((p.kWhTarget - s.kWh) / p.power) * 60);
     const fullAt = new Date(p.bookedAt + (s.minutes + left) * 60000);
-    return `<div class="charge-view">
+    return `${journey}<div class="charge-view">
       <div class="head"><h2>Charging</h2><span class="chip on"><span class="live-dot"></span>Live</span></div>
       <p class="muted">${esc(p.name)}</p>
       <div class="ring" role="progressbar" aria-label="Battery" aria-valuenow="${Math.round(battery)}" aria-valuemin="0" aria-valuemax="100">
@@ -993,7 +1020,7 @@ function stageHtml(ctx, r) {
     </div>`;
   }
   const s = p.session;
-  return `<p class="notice-line"><b>Notification:</b> ${s.kWh >= p.kWhTarget - 0.01 ? 'charging complete' : 'charging stopped'}. Please move your car by ${esc(fmtClock(new Date(p.slotEnd)))} to avoid the overstay fee.</p>
+  return `${journey}<p class="notice-line"><b>Notification:</b> ${s.kWh >= p.kWhTarget - 0.01 ? 'charging complete' : 'charging stopped'}. Please move your car by ${esc(fmtClock(new Date(p.slotEnd)))} to avoid the overstay fee.</p>
     <h2>How did it go?</h2>
     <p>${s.kWh.toFixed(1)} kWh for <b>${rm(s.kWh * p.price)}</b> at ${esc(p.name)}.</p>
     <label class="field">Note (optional) <input id="d-note" type="text" maxlength="120" placeholder="e.g. cable damaged on bay 3"></label>
@@ -1289,7 +1316,8 @@ function initMap(el, fallback) {
   pickLayer = null;
   trafficLayer = null;
   if (!window.L) { el.hidden = true; fallback.hidden = false; return; }
-  map = L.map(el, { scrollWheelZoom: true }).setView([3.2135, 101.7265], 14);
+  // Presentation-only: a route replacement must not leave a zoom transition running.
+  map = L.map(el, { scrollWheelZoom: true, zoomAnimation: false }).setView([3.2135, 101.7265], 14);
   const tiles = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 19, attribution: '&copy; OpenStreetMap contributors',
   }).addTo(map);
@@ -1587,7 +1615,7 @@ function detailHtml(d, timing = '') {
     ? `<ul class="checkins">${d.recentCheckins.map((c) => `<li><span class="chip ${c.ok ? 'on' : 'warn'}">${c.ok ? 'Worked' : 'Problem'}</span> ${esc(fmtTime(new Date(c.at)))}${c.note ? ` · ${esc(c.note)}` : ''}</li>`).join('')}</ul>`
     : '<p class="muted">No check-ins yet. Be the first after you charge.</p>';
   return `
-    <div class="detail-art">${siteArt({ id: d.id, siteType: d.siteType, highway: d.highway }, d.name)}</div>
+    <div class="detail-sizes" role="group" aria-label="Charger detail panel size"><button type="button" data-detail-size="compact" aria-pressed="false">Compact</button><button type="button" data-detail-size="medium" aria-pressed="true">Browse</button><button type="button" data-detail-size="expanded" aria-pressed="false">Expand</button></div>
     <div class="detail-head"><h3>${brandMark(d.operator)}${esc(d.name)}</h3>
       <button class="btn small" type="button" data-close aria-label="Close details">Close</button></div>
     ${d.address ? `<p class="muted">${esc(d.address)}</p>` : ''}
