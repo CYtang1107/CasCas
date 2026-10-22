@@ -8,6 +8,38 @@ let examplesOpen = false;
 let homeShortcuts = null;
 const mobileLayout = matchMedia('(max-width: 767px)');
 mobileLayout.addEventListener('change', decorate);
+// Plan page: the charge-options panel floats over the map. Inactive it is a faint ghost the map can
+// be used through; hovering its tab hints it (mouse only); a click on the tab or a pin activates it.
+const panel = { state: 'inactive', selected: null };
+const canHover = matchMedia('(hover: hover) and (pointer: fine)');
+const calm = matchMedia('(prefers-reduced-motion: reduce)');
+const setPanel = (state) => { if (panel.state !== state) { panel.state = state; decorate(); } };
+
+document.addEventListener('mouseover', (event) => {
+  if (canHover.matches && panel.state === 'inactive' && event.target.closest('[data-panel-toggle]')) setPanel('hovered');
+});
+document.addEventListener('mouseout', (event) => {
+  const tab = event.target.closest('[data-panel-toggle]');
+  if (tab && panel.state === 'hovered' && !tab.contains(event.relatedTarget)) setPanel('inactive');
+});
+// Only empty-map clicks (from Leaflet) close it; clicks inside the panel, its menus and popups do not.
+document.addEventListener('cassama:mapclick', () => setPanel('inactive'));
+document.addEventListener('cassama:select', (event) => {
+  const sheet = view.querySelector('.charging-workspace .recommendation-sheet');
+  panel.selected = event.detail.id;
+  if (!sheet) return;
+  // On a phone the open panel covers the map, so "On map" steps it back to show the pin and its details.
+  if (event.detail.fromList) { setPanel(mobileLayout.matches ? 'inactive' : 'active'); return; }
+  const card = sheet.querySelector(`[data-pick="${CSS.escape(event.detail.id)}"]`);
+  // A phone pin that is not in the list shows its own detail sheet; the panel stays out of the way.
+  if (mobileLayout.matches && !card) { setPanel('inactive'); return; }
+  setPanel('active');
+  const list = sheet.querySelector('.results');
+  if (card && list) {
+    const offset = card.getBoundingClientRect().top - list.getBoundingClientRect().top - 8;
+    list.scrollBy({ top: offset, behavior: calm.matches ? 'auto' : 'smooth' });
+  }
+});
 
 document.addEventListener('focusin', (event) => {
   const target = event.target;
@@ -18,6 +50,7 @@ document.addEventListener('focusin', (event) => {
 
 document.addEventListener('click', (event) => {
   if (event.target.closest('.skip-link')) { event.preventDefault(); view.focus(); return; }
+  if (event.target.closest('[data-panel-toggle]')) { setPanel(panel.state === 'active' ? 'inactive' : 'active'); return; }
   if (event.target.closest('[data-close]')) view.querySelector('#d-map')?.focus({ preventScroll: true });
   const control = event.target.closest('[data-detail-size]');
   if (!control) return;
@@ -36,9 +69,11 @@ document.addEventListener('keydown', (event) => {
   if (event.key !== 'Escape') return;
   const tools = document.querySelector('.demo-tools[open]');
   if (tools) { tools.open = false; tools.querySelector('summary').focus(); }
-  if (event.target.closest('.recommendation-sheet')) {
-    sizes.recommendations = 'medium'; decorate();
-    view.querySelector('select[data-sheet-size]')?.focus();
+  // Escape steps the floating panel back, unless a sheet or search screen opened over it is showing.
+  const overlay = view.querySelector('.sheet-backdrop:not([hidden]), .search-screen:not([hidden])');
+  if (panel.state === 'active' && !overlay && view.querySelector('.charging-workspace .recommendation-sheet')) {
+    setPanel('inactive');
+    view.querySelector('[data-panel-toggle]')?.focus();
   }
 });
 
@@ -79,6 +114,7 @@ function decorate() {
     if (!mobileLayout.matches && shortcuts.parentElement === homeBody) home.insertBefore(shortcuts, homeBody);
   }
   setSize(view.querySelector('.recommendation-sheet'), sizes.recommendations, 'data-sheet-size');
+  decoratePanel();
   setSize(view.querySelector('#d-detail'), sizes.detail, 'data-detail-size');
   const preferences = view.querySelector('[data-preferences]');
   if (preferences && !preferences.dataset.bound) {
@@ -117,6 +153,22 @@ function decorate() {
   if (sessionFocus && document.activeElement === document.body) {
     view.querySelector(`#d-activity ${sessionFocus}`)?.focus({ preventScroll: true });
   }
+}
+
+function decoratePanel() {
+  const sheet = view.querySelector('.charging-workspace .recommendation-sheet');
+  const tab = view.querySelector('[data-panel-toggle]');
+  if (!sheet || !tab) return;
+  // Without a map there is nothing to see through: keep the list fully usable.
+  const state = view.querySelector('#d-map[hidden]') ? 'active' : panel.state;
+  if (sheet.dataset.panel !== state) sheet.dataset.panel = state;
+  sheet.inert = state !== 'active'; // the ghost is not reachable by Tab or screen readers
+  const open = String(state === 'active');
+  if (tab.getAttribute('aria-expanded') !== open) tab.setAttribute('aria-expanded', open);
+  const label = state === 'active' ? 'Hide options' : 'Charge options';
+  const text = tab.querySelector('span');
+  if (text && text.textContent !== label) text.textContent = label;
+  sheet.querySelectorAll('[data-pick]').forEach((card) => card.classList.toggle('is-selected', card.dataset.pick === panel.selected));
 }
 
 new MutationObserver(decorate).observe(view, { childList: true, subtree: true });

@@ -262,7 +262,8 @@ export function renderDriver(root, ctx, which = 'home') {
     </section></details>
     <div class="charging-workspace">
     ${mapRow('compact')}
-    <aside class="recommendation-sheet" data-sheet="medium" aria-label="Charging recommendations">
+    <button type="button" class="panel-tab" data-panel-toggle aria-controls="d-sheet" aria-expanded="false">${IC.bolt}<span>Charge options</span></button>
+    <aside class="recommendation-sheet" id="d-sheet" data-sheet="medium" data-panel="inactive" aria-label="Charging recommendations">
       <div class="sheet-toolbar"><span>Charge options</span><label class="sheet-sizes"><span class="sr-only">Recommendation view</span>
         <select data-sheet-size aria-label="Recommendation view" aria-controls="d-results">
           <option value="compact">Compact</option>
@@ -906,7 +907,7 @@ const facts = (c) => `<div class="facts">${availChip(c.charger, c.occupancy)}
 
 function heroCard(c) {
   return `
-    <article class="pick hero">
+    <article class="pick hero" data-pick="${esc(c.charger.id)}">
       <div class="hero-tags">${c.isSharedVisit ? '<span class="chip amber-tag">Shared now</span>' : ''}${c.isResident ? `<span class="chip">${IC.home}Your condo</span>` : ''}</div>
       <h3>${esc(c.charger.name)}</h3>
       <p class="muted">${esc(c.charger.operator)} · ${esc(c.charger.connectors.join(', '))}</p>
@@ -921,7 +922,7 @@ function heroCard(c) {
 
 function smallCard(c, i) {
   return `
-    <article class="pick">
+    <article class="pick" data-pick="${esc(c.charger.id)}">
       <div class="pick-top"><span class="rank">${i + 1}</span>
         <div><h3>${esc(c.charger.name)}</h3><p class="muted">${esc(c.charger.operator)}</p></div></div>
       ${facts(c)}
@@ -1263,6 +1264,8 @@ function initMap(el, fallback) {
   }).addTo(map);
   tiles.on('tileerror', () => { fallback.hidden = false; });
   layer = L.layerGroup().addTo(map);
+  // A click on empty map (not a marker, popup or control) tells the floating panel to step back.
+  map.on('click', () => document.dispatchEvent(new CustomEvent('cassama:mapclick')));
 }
 
 // What the filters need to know about one charger right now.
@@ -1495,11 +1498,44 @@ function select(root, ctx, id, fromList) {
   ui.selected = id;
   if (tab !== 'map' && tab !== 'plan') { location.hash = '#map'; return; }
   if (!last) return;
-  renderDetail(root, ctx, last.ranking, last.car);
+  // Phone, Plan page: a tapped pin that is in the options list opens that card instead of a second sheet.
+  const phone = matchMedia('(max-width: 767px)').matches;
+  const inList = !!root.querySelector(`#d-sheet [data-pick="${CSS.escape(id)}"]`);
+  if (!(phone && tab === 'plan' && !fromList && inList)) renderDetail(root, ctx, last.ranking, last.car);
+  highlightMarker(id);
+  // The Plan page's floating panel follows the selection (views/presentation.js).
+  document.dispatchEvent(new CustomEvent('cassama:select', { detail: { id, fromList } }));
   if (fromList && map) {
     const m = markers.get(id);
-    if (m) { map.setView(m.getLatLng(), Math.max(map.getZoom(), 15)); m.openPopup(); }
-    root.querySelector('#d-map-row')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    if (m) {
+      if (map.getZoom() < 13) map.setView(m.getLatLng(), 15); else if (!map.getBounds().contains(m.getLatLng())) map.panTo(m.getLatLng());
+      keepClearOfPanel(m);
+      m.openPopup();
+    }
+    if (tab === 'map') root.querySelector('#d-map-row')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+}
+
+// Outline the selected pin without redrawing every marker.
+function highlightMarker(id) {
+  for (const [key, m] of markers) m.getElement()?.querySelector('.pin')?.classList.toggle('sel', key === id);
+}
+
+// Plan page: if the open charge-options panel covers the pin, slide the map just enough to show it.
+function keepClearOfPanel(m) {
+  const sheet = document.querySelector('.charging-workspace .recommendation-sheet[data-panel="active"]');
+  const box = map?.getContainer();
+  if (!sheet || !box) return;
+  const s = sheet.getBoundingClientRect();
+  const b = box.getBoundingClientRect();
+  const p = map.latLngToContainerPoint(m.getLatLng());
+  const side = s.width < b.width * 0.8; // beside the map (desktop) or across it (phone)
+  if (side) {
+    const free = s.left - b.left - 24;
+    if (p.x > free) map.panBy([p.x - free / 2, 0]);
+  } else {
+    const free = s.top - b.top - 24;
+    if (p.y > free && free > 80) map.panBy([0, p.y - free / 2]);
   }
 }
 

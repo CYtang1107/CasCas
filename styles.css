@@ -1237,3 +1237,64 @@ main:has(> .loading) { min-height: 100vh; min-height: 100dvh; }
 .vehicle > *, .vcar { min-width: 0; max-width: 100%; }
 .vspec { flex-wrap: wrap; max-width: 100%; }
 .srow2 { flex-wrap: wrap; gap: 8px; }
+
+/* Plan: full-width map with a floating charge-options panel. Inactive it is a faint ghost the map is
+   used through; the tab hints it on hover and opens it; active it is the full navy panel. */
+.charging-workspace { display: block; position: relative; }
+/* Leaflet's panes use z-indexes up to 1000; keep them inside the map so the panel floats above. */
+.charging-workspace #d-map { position: relative; z-index: 0; }
+.charging-workspace .recommendation-sheet {
+  position: absolute; z-index: 650; top: 72px; right: 16px; bottom: 32px; width: min(370px, calc(100% - 32px)); max-height: none;
+  margin: 0; background: var(--surface); border: 1px solid transparent; border-radius: 18px; box-shadow: none;
+  backdrop-filter: none; -webkit-backdrop-filter: none;
+  opacity: .12; transform: scale(.98); transform-origin: top right; pointer-events: none;
+  transition: opacity .28s ease-out, transform .28s ease-out, box-shadow .28s ease-out, border-color .28s ease-out;
+}
+.charging-workspace .recommendation-sheet[data-panel="hovered"] { opacity: .45; }
+.charging-workspace .recommendation-sheet[data-panel="active"] {
+  opacity: 1; transform: none; pointer-events: auto; border-color: var(--line);
+  box-shadow: 0 0 0 1px rgba(91, 214, 180, .12), var(--shadow);
+}
+.charging-workspace .recommendation-sheet[data-sheet="compact"] { bottom: auto; max-height: calc(100% - 104px); }
+.charging-workspace .recommendation-sheet[data-sheet="expanded"] { width: min(460px, calc(100% - 32px)); }
+.charging-workspace .recommendation-sheet .results { min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
+.charging-workspace .recommendation-sheet .results::-webkit-scrollbar { width: 8px; }
+.charging-workspace .recommendation-sheet .results::-webkit-scrollbar-thumb { background: var(--line); border-radius: 8px; }
+/* The tab sits outside the panel, so it stays visible and clickable while the panel is a ghost. */
+.panel-tab {
+  position: absolute; z-index: 660; top: 16px; right: 16px; display: inline-flex; align-items: center; gap: 8px;
+  min-height: 44px; padding: 0 16px; border: 1px solid var(--line); border-radius: 999px; cursor: pointer;
+  background: var(--surface); color: var(--fg); font: 600 .9rem/1 var(--body); box-shadow: var(--shadow-sm);
+  transition: background-color .25s ease-out, color .25s ease-out;
+}
+.panel-tab .ic { width: 18px; height: 18px; color: var(--accent); }
+.panel-tab:hover { border-color: var(--accent); }
+.panel-tab[aria-expanded="true"] { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.panel-tab[aria-expanded="true"] .ic { color: var(--accent-ink); }
+/* The picked charger, in the panel (the map pin gets .sel). */
+.results .pick { transition: background-color .25s ease-out; }
+.results .pick.is-selected { box-shadow: inset 3px 0 0 var(--accent); padding-left: 14px; background: var(--accent-soft); border-radius: 12px; }
+/* Charger details sit on the left on the Plan page so they do not cover the options panel. */
+.charging-workspace .map-row .detail { left: 60px; right: auto; }
+/* Without a map the list is shown in place. */
+.charging-workspace:has(#d-map[hidden]) .recommendation-sheet { position: relative; inset: auto; width: auto; opacity: 1; transform: none; pointer-events: auto; margin-top: 16px; }
+.charging-workspace:has(#d-map[hidden]) .panel-tab { display: none; }
+
+/* Tablet: the same, with a narrower panel. */
+@media (max-width: 1023px) {
+  .charging-workspace .recommendation-sheet { width: min(340px, calc(100% - 24px)); right: 12px; }
+  .charging-workspace .recommendation-sheet[data-sheet="expanded"] { width: min(420px, calc(100% - 24px)); }
+  .panel-tab { right: 12px; top: 12px; }
+}
+/* Phone: the panel spans the map's width, compact while inactive, and never runs past the map (so never under the tab bar). */
+@media (max-width: 767px) {
+  .charging-workspace .recommendation-sheet { left: 8px; right: 8px; top: 64px; bottom: 8px; width: auto; transform-origin: top center; }
+  .charging-workspace .recommendation-sheet:not([data-panel="active"]) { bottom: auto; max-height: 34%; }
+  .charging-workspace .recommendation-sheet[data-sheet="expanded"] { width: auto; }
+  .charging-workspace .map-row .detail { left: 8px; right: 8px; }
+  .panel-tab { right: 8px; top: 8px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .charging-workspace .recommendation-sheet, .panel-tab, .results .pick { transition: none; }
+  .charging-workspace .recommendation-sheet { transform: none; }
+}
