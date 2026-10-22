@@ -1007,6 +1007,7 @@ select.bare option { color: var(--fg); background: var(--surface); }
 .portal-page .cmp b { font: 600 1.8rem/1.2 var(--display); }
 .portal-page .cmp .win span, .portal-page .cmp .win small { color: var(--fg); }
 .portal-page .quiet { background: var(--amber-soft); border: 1px solid #CEAD87; border-radius: 5px; padding: 14px; }
+.portal-page .quiet.ok { background: var(--accent-soft); border-color: var(--line); }
 .portal-page .vote-card { border-radius: 5px; border-color: var(--ink-line); padding: 16px; }
 .portal-page .propose { padding-top: 8px; border-top: 1px solid var(--line); }
 .portal-page .propose summary { color: var(--accent); }

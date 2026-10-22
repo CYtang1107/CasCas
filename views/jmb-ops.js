@@ -3,6 +3,7 @@
 import { CONST } from '../config.js';
 import { KINDS, bayStatus, validateEntry } from '../engine/maintenance.js';
 import { quietWindows } from '../engine/recovery.js';
+import { simulateCondoMonth } from '../engine/economics.js';
 import { monthlyReportCsv } from '../engine/report.js';
 import { esc, rm, rm0, num, pct, fmtDay } from './format.js';
 
@@ -38,21 +39,43 @@ export function recoveryHtml(condo, sim) {
     </section>`;
 }
 
-// Hours when most bays sit idle, compared with the hours the JMB already shares.
-export function quietHtml(condo, charger, sim) {
+// Hours when residents leave most bays idle, which of those hours are not shared yet, how many bays
+// stand empty then, and what sharing them would add (the same monthly simulation as the dashboard).
+export function quietHtml(condo, charger, sim, start) {
   const cap = condo.bays * charger.kw * CONST.drawFactor;
-  const use = sim.residentByHour.map((r, h) => (r + sim.visitorByHour[h]) / cap);
   // Only hours outside drivers actually come (7 AM to 10 PM) count.
   const resUse = sim.residentByHour.map((r, h) => (h >= 7 && h < 22 ? r / cap : 1));
   const idle = quietWindows(resUse, 0.25, 3)[0];
-  if (!idle) return '<p class="muted">Residents keep the bays busy most of the day.</p>';
+  if (!idle) return '<p class="muted">Residents keep the bays busy most of the day, so there are no idle hours to share.</p>';
   const s = condo.sharing;
-  const shared = s.enabled ? `You share ${hour(s.start)} to ${hour(s.end)}.` : 'Sharing is off.';
-  const filled = use.slice(idle.start, idle.end).reduce((a, b) => a + b, 0) / (idle.end - idle.start);
-  const gap = !s.enabled || idle.start < s.start || idle.end > s.end
-    ? ` Opening more of ${hour(idle.start)} to ${hour(idle.end)} to visitors would use bays that are otherwise idle.`
-    : ' Your sharing hours already cover this window.';
-  return `<p class="quiet"><b>Underused hours:</b> residents use only ${pct(idle.avgUse)} of the bays from ${hour(idle.start)} to ${hour(idle.end)}; with visitors it is ${pct(filled)}. ${shared}${gap}</p>`;
+  const span = `${hour(idle.start)}–${hour(idle.end)}`;
+  const intro = `<b>Idle hours:</b> on a typical day residents use only ${pct(idle.avgUse)} of the bays from ${span}.`;
+  if (s.enabled && s.mode === 'auto') {
+    return `<p class="quiet ok">${intro} Auto-share already opens bays in these hours whenever residents are not expected to need them.</p>`;
+  }
+  const gaps = unsharedRanges(idle, s);
+  if (!gaps.length) return `<p class="quiet ok">${intro} Your sharing hours (${hour(s.start)}–${hour(s.end)}) already cover them.</p>`;
+  const gapHours = gaps.flatMap(([a, b]) => Array.from({ length: b - a }, (_, i) => a + i));
+  const gapUse = gapHours.reduce((t, h) => t + resUse[h], 0) / gapHours.length;
+  const freeBays = Math.max(0, Math.round(condo.bays * (1 - gapUse)) - s.reservedBays);
+  const wider = { ...s, enabled: true, start: s.enabled ? Math.min(s.start, idle.start) : idle.start, end: s.enabled ? Math.max(s.end, idle.end) : idle.end };
+  const extra = start ? simulateCondoMonth({ ...condo, sharing: wider }, charger, start, { maintenanceRm: sim.recovery?.maintenanceRm || 0 }).jmbIncome - sim.jmbIncome : 0;
+  const list = gaps.map(([a, b]) => `${hour(a)}–${hour(b)}`).join(' and ');
+  const now = s.enabled ? `You share ${hour(s.start)}–${hour(s.end)}, so ${list} ${gaps.length > 1 ? 'are' : 'is'} not shared yet` : `Sharing is off, so none of ${list} is shared`;
+  const gain = extra >= 1 ? ` Sharing ${hour(wider.start)}–${hour(wider.end)} would add about <b>${rm0(extra)} a month</b> for the JMB (simulated).` : '';
+  return `<p class="quiet">${intro} ${now}; about <b>${freeBays} of ${condo.bays} bays</b> stand empty then, after keeping ${s.reservedBays} for residents.${gain}</p>`;
+}
+
+// Hours of the idle window that fall outside the shared hours, as [start, end) ranges.
+function unsharedRanges(idle, s) {
+  const out = [];
+  for (let h = idle.start; h < idle.end; h++) {
+    const shared = s.enabled && h >= s.start && h < s.end;
+    if (shared) continue;
+    const last = out[out.length - 1];
+    if (last && last[1] === h) last[1] = h + 1; else out.push([h, h + 1]);
+  }
+  return out;
 }
 
 export function maintenanceHtml(condo, entries, canEdit, clock) {
