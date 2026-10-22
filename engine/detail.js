@@ -76,6 +76,8 @@ export function describeCharger({ charger, ranking, condo = null, date, isReside
     access: accessLine(charger, condo, date, isResident),
     rank: r ? idx + 1 : null,
     verdict,
+    // Short stops at slow AC bays are excluded as "Too slow"; the panel offers a longer stay instead.
+    tooSlow: !r && !!off && /^Too slow/.test(off.reason),
     reasons: r ? r.reasons : [],
     bookable: !!r,
     trip: r ? { cost: r.cost, kWh: r.deliveredKwh, addedKm: r.addedKm, walkMin: r.walkMin, detourMin: r.detourMin, full: r.full } : null,

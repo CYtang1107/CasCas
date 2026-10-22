@@ -1580,6 +1580,12 @@ function renderDetail(root, ctx, ranking, car) {
     startBooking(root, ctx, ranking, car, d.id);
     root.querySelector('#d-results')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   });
+  // A slow AC bay is fine for a longer stay: switch the stay, re-rank, then book in one tap.
+  aside.querySelector('[data-detail-stay]')?.addEventListener('click', (e) => {
+    ui.parkFor = e.currentTarget.dataset.detailStay;
+    update(root, ctx);
+    if (last?.ranking.results.some((c) => c.charger.id === d.id)) startBooking(root, ctx, last.ranking, last.car, d.id);
+  });
 }
 
 function detailHtml(d, timing = '') {
@@ -1610,7 +1616,9 @@ function detailHtml(d, timing = '') {
     <h4>Recent check-ins (${d.checkinCount})</h4>
     ${checkins}
     <div class="btn-row">
-      ${d.bookable && ui.stage === 'pick' ? `<button class="btn primary" type="button" data-detail-book="${esc(d.id)}">Book this bay</button>` : ''}
+      ${ui.stage !== 'pick' ? '<a class="btn primary" href="#activity">You have a booking: see Activity</a>'
+        : d.bookable ? `<button class="btn primary" type="button" data-detail-book="${esc(d.id)}">Book this bay</button>`
+          : d.tooSlow && ui.parkFor !== 'overnight' ? `<button class="btn primary" type="button" data-detail-stay="${ui.parkFor === '2h' ? '4h' : '2h'}">Park ${ui.parkFor === '2h' ? '4' : '2'} h and book</button>` : ''}
       <a class="btn" href="${esc(d.directionsUrl)}" target="_blank" rel="noopener">Directions</a>
     </div>`;
 }

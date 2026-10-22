@@ -31,6 +31,8 @@ test('an unsuitable charger explains why and cannot be booked', () => {
   const d = describeCharger({ charger: charger({ id: 'slow', type: 'AC', kw: 7 }), ranking, date: wed11, checkins: [] });
   assert.equal(d.verdict, 'Not suitable now: Too slow for a 30 min stop');
   assert.equal(d.bookable, false);
+  assert.equal(d.tooSlow, true); // the panel offers a longer stay
+  assert.equal(describeCharger({ charger: charger(), ranking, date: wed11, checkins: [] }).tooSlow, false);
   assert.equal(d.trip, null);
   assert.ok(d.priceNow > 0);
   assert.ok(d.occupancyPct >= 0 && d.occupancyPct <= 100);
