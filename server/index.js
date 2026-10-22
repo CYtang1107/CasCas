@@ -27,6 +27,11 @@ const app = createApp({
     key: process.env.AI_API_KEY || process.env.DASHSCOPE_API_KEY || '',
     baseUrl: process.env.AI_BASE_URL || undefined,
     models: process.env.AI_MODELS ? process.env.AI_MODELS.split(',').map((m) => m.trim()).filter(Boolean) : undefined,
+    // Per-model HTTP deadline. Defaults to 25s in the agent; raise for slower Gemini calls.
+    timeoutMs: (() => {
+      const ms = Number(process.env.AI_TIMEOUT_MS);
+      return Number.isFinite(ms) && ms >= 1000 ? Math.min(ms, 120000) : undefined;
+    })(),
   },
 });
 

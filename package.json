@@ -7,7 +7,8 @@
   "scripts": {
     "test": "node --test",
     "pilot:verify": "node --test test/pilot-readiness.test.js",
-    "start": "node server/index.js"
+    "start": "node server/index.js",
+    "acceptance:verify": "node scripts/acceptance-run.mjs"
   },
   "dependencies": {
     "express": "^4.22.3",

@@ -86,6 +86,43 @@ test('orchestrator calls tools, then answers with citations and actions', async 
   assert.ok(seen[1].messages.some((m) => m.role === 'tool'));
 });
 
+test('Gemini-compatible base URL with a trailing slash produces a valid endpoint', async () => {
+  const seenUrls = [];
+  const fetchFn = async (url) => {
+    seenUrls.push(url);
+    return { ok: true, status: 200, json: async () => ({ choices: [{ message: { role: 'assistant', content: 'Hello!' } }] }) };
+  };
+  for (const baseUrl of [
+    'https://generativelanguage.googleapis.com/v1beta/openai/',
+    'https://generativelanguage.googleapis.com/v1beta/openai',
+  ]) {
+    const agent = createAgent({ key: 'test', baseUrl, models: ['gemini-3.8-flash'], fetchFn });
+    const reply = await agent.ask({ text: 'Hello', env, context: ctx });
+    assert.equal(reply.model, 'gemini-3.8-flash');
+  }
+  assert.deepEqual(seenUrls, [
+    'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
+    'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
+  ]);
+});
+
+test('Gemini 3 uses low reasoning effort, without changing Qwen request parameters', async () => {
+  const seen = [];
+  const fetchFn = async (_url, opts) => {
+    seen.push(JSON.parse(opts.body));
+    return { ok: true, status: 200, json: async () => ({ choices: [{ message: { role: 'assistant', content: 'Hello!' } }] }) };
+  };
+  await createAgent({ key: 'test', models: ['gemini-3.8-flash'],
+    baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', fetchFn,
+  }).ask({ text: 'hi', env, context: ctx });
+  await createAgent({ key: 'test', models: ['qwen-plus-latest'], fetchFn,
+  }).ask({ text: 'hi', env, context: ctx });
+  assert.equal(seen[0].reasoning_effort, 'low');
+  assert.equal('temperature' in seen[0], false);
+  assert.equal(seen[1].temperature, 0.2);
+  assert.equal('reasoning_effort' in seen[1], false);
+});
+
 test('falls back to the next model on 429', async () => {
   const { fetchFn, seen } = fakeAi([429, { role: 'assistant', content: 'Hello, ask me about charging.' }]);
   const r = await createAgent({ key: 'k', fetchFn, models: ['a', 'b'] }).ask({ text: 'hi', env, context: ctx });

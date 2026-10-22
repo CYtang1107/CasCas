@@ -25,16 +25,26 @@ export function createAgent({ key, baseUrl = 'https://dashscope-intl.aliyuncs.co
     return true;
   }
 
+  // Providers differ in trailing-slash conventions; avoid a double slash in the REST path.
+  const chatUrl = `${String(baseUrl).replace(/\/+$/, '')}/chat/completions`;
+  const isGemini = (() => {
+    try { return new URL(chatUrl).hostname === 'generativelanguage.googleapis.com'; }
+    catch { return false; }
+  })();
+
   async function complete(messages, useTools) {
     let lastErr = 'no model';
     for (const model of models) {
+      // Gemini 3.x spends additional time reasoning by default. Low effort makes
+      // conversational tool use faster; other providers retain their settings.
+      const gemini3 = isGemini && /^gemini-3(?:[.-]|$)/i.test(model);
       const ctrl = new AbortController();
       const timer = setTimeout(() => ctrl.abort(), timeoutMs);
       try {
-        const res = await fetchFn(`${baseUrl}/chat/completions`, {
+        const res = await fetchFn(chatUrl, {
           method: 'POST', signal: ctrl.signal,
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
-          body: JSON.stringify({ model, messages, temperature: 0.2, max_tokens: 500, ...(useTools ? { tools: TOOLS, tool_choice: 'auto' } : {}) }),
+          body: JSON.stringify({ model, messages, ...(gemini3 ? { reasoning_effort: 'low' } : { temperature: 0.2 }), max_tokens: 500, ...(useTools ? { tools: TOOLS, tool_choice: 'auto' } : {}) }),
         });
         if (!res.ok) {
           let why = '';

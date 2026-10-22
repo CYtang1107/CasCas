@@ -20,7 +20,7 @@ import { CONDOS } from '../data/condos.js';
 import { osrmUrl, parseOsrm, stepText, typicalTraffic, refineTrip } from '../engine/roads.js';
 import { parseTtRoute, parseIncidents, incidentsNear } from '../engine/tomtom.js';
 import { bestWindow } from '../engine/schedule.js';
-import { parseRequest } from '../engine/assistant.js';
+import { parseRequest, askRoute, looksLikeQuestion } from '../engine/assistant.js';
 import { planTrip } from '../engine/trip.js';
 import { TRIP_PLACES, HIGHWAY_CHARGERS } from '../data/trips.js';
 import { normalisePlate, isValidPlate, formatPlate, canAutoApprove, createPass } from '../engine/access.js';
@@ -173,7 +173,7 @@ export function renderDriver(root, ctx, which = 'home') {
   const { condos } = ctx.world;
   const askForm = (big) => `<form id="d-ask" class="ask ${big ? 'big' : ''}" role="search" novalidate>
         <label class="search"><span class="sr-only">Ask CasSama</span>${IC.search}
-          <input id="d-ask-text" type="search" maxlength="200" autocomplete="off" enterkeyhint="go" placeholder="${big && aiOn() ? 'Ask CasSama anything: “cheapest charge at 20%?”' : 'Ask CasSama: “Atto 3 at 71%, going to Melaka”'}" value="${esc(ui.ask)}"></label>
+          <input id="d-ask-text" type="search" maxlength="200" autocomplete="off" enterkeyhint="go" placeholder="${aiOn() ? 'Ask CasSama about charging, sharing or costs…' : 'Set trip details: “Atto 3 at 71%, going to Melaka”'}" value="${esc(ui.ask)}"></label>
         <button class="btn primary" type="submit">Go</button>
       </form>
       ${ui.askNote ? `<p class="ask-note" role="status">${esc(ui.askNote)}</p>` : ''}`;
@@ -621,7 +621,14 @@ function hasPrefs() {
 
 // Apply what Ask CasSama understood, then redraw the page so every field shows it.
 function ask(root, ctx, text) {
-  if (tab === 'home' && aiOn()) { askAi(root, ctx, text); return; }
+  if (askRoute(tab, aiOn()) === 'chat') {
+    ui.askNote = '';
+    // Plan also has an Ask input, but only Home renders the conversation.
+    // Navigate there before sending so the user can see the agent answer.
+    if (tab === 'plan') location.hash = '#home';
+    askAi(root, ctx, text);
+    return;
+  }
   ui.ask = text;
   const { set, understood } = parseRequest(text, { cars: CARS, places: ALL_PLACES });
   if (set.arriveMin != null) ui.arriveMin = set.arriveMin;
@@ -632,9 +639,11 @@ function ask(root, ctx, text) {
   if ('maxPrice' in set) ui.prefs.maxPrice = set.maxPrice;
   if ('fastOnly' in set) ui.prefs.fastOnly = set.fastOnly;
   if ('operator' in set) ui.prefs.operator = set.operator;
-  ui.askNote = understood.length
-    ? `Understood: ${understood.join(' · ')}.`
-    : 'Sorry, I could not find a battery level, place, stay or preference in that. Try "40%, going to KLCC for 2 hours".';
+  ui.askNote = looksLikeQuestion(text)
+    ? `Conversational AI is not enabled on this server. ${understood.length ? `I only applied these trip settings: ${understood.join(' · ')}. ` : ''}For scheduling advice, booking policies or revenue questions, enable the AI API key. You can still set battery, destination and parking time here.`
+    : understood.length
+      ? `Understood: ${understood.join(' · ')}.`
+      : 'This field sets trip preferences only while AI is off. Try "40%, going to KLCC for 2 hours".';
   if (ui.stage === 'plate') ui.stage = 'pick';
   if (location.hash !== '#plan') location.hash = '#plan';
   else renderDriver(root, ctx, 'plan');
@@ -672,7 +681,15 @@ function bindChat(root) {
     location.hash = '#plan';
   }));
 }
-aiAvailable().then((on) => { if (on && tab === 'home' && current) renderDriver(current.root, current.ctx, 'home'); });
+aiAvailable().then((on) => {
+  if (!on || !current) return;
+  if (tab === 'home') renderDriver(current.root, current.ctx, 'home');
+  else if (tab === 'plan') {
+    // Update the prompt without destroying the trip form or resetting its focus.
+    const input = current.root.querySelector('#d-ask-text');
+    if (input) input.placeholder = 'Ask CasSama about charging, sharing or costs…';
+  }
+});
 
 // ---- From / To: type a place, pick a suggestion, or use your location ----
 let suggestTimer = null;

@@ -14,3 +14,7 @@ skills-lock.json
 !/GOVERNANCE_VERIFICATION.md
 
 !/AI_AGENT_REVIEW.md
+
+# Locally generated test evidence, never credentials or live-site data.
+/acceptance-results/
+!/PHASE8_ACCEPTANCE.md
