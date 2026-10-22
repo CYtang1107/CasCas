@@ -554,7 +554,7 @@ function bindAccount(root, ctx) {
 function activityHtml(ctx, r) {
   if (ui.stage !== 'pick') return stageHtml(ctx, r);
   const flash = ui.flash ? `<p class="flash">${esc(ui.flash)}</p>` : '';
-  const name = (id) => ctx.world.chargers.find((c) => c.id === id)?.name || id;
+  const name = (id) => [...ctx.world.chargers, ...HIGHWAY_CHARGERS].find((c) => c.id === id)?.name || id;
   const list = [...ctx.state.sessions].sort((a, b) => b.at - a.at).slice(0, 10);
   const source = document.getElementById('data-source')?.textContent || '';
   const mode = document.getElementById('data-mode')?.textContent || '';
@@ -602,6 +602,7 @@ function update(root, ctx) {
   drawMarkers(root, ctx, origin, ranking, car);
   drawTrip(origin, trip, place, tripRoad);
   drawPickRoute(origin, trip, ctx);
+  lastTrip = trip?.ok ? trip : null;
   if ($('#d-results')) $('#d-results').innerHTML = trip ? tripHtml(trip, place, ctx, tripRoad) : pickHtml(ranking, ctx);
   if ($('#d-home-body')) $('#d-home-body').innerHTML = homeHtml(ranking, ctx, trip, place);
   if ($('#d-activity')) $('#d-activity').innerHTML = activityHtml(ctx, ranking);
@@ -791,7 +792,8 @@ function tripHtml(t, place, ctx, rd = null) {
       items.push(`<li class="trip-stop"><div><span class="stop-tag">Charging stop</span><b>${esc(s.charger.name)}</b>
         <span class="muted">${esc(s.charger.operator)} · DC ${s.charger.kw} kW · ${rm(s.price)}/kWh · ${esc(fmtTime(new Date(s.at)))}</span></div>
         <div class="charge-bar">${pctTag(s.arrivePct)}<span class="track"><span style="left:${s.arrivePct}%;width:${s.departPct - s.arrivePct}%"></span></span>${pctTag(s.departPct)}</div>
-        <p class="muted">${formatDuration(s.minutes)} · ${s.kWh.toFixed(1)} kWh · ${rm(s.cost)}</p></li>`);
+        <p class="muted">${formatDuration(s.minutes)} · ${s.kWh.toFixed(1)} kWh · ${rm(s.cost)}</p>
+        ${ui.stage === 'pick' ? `<div class="btn-row"><button class="btn primary small" type="button" data-book-stop="${i}">Book this stop</button></div>` : ''}</li>`);
     }
   });
   items.push(`<li class="trip-pt"><div><span class="muted">Arrive</span><b>${esc(place.name)}</b></div>${pctTag(t.arrivePct)}</li>`);
@@ -979,14 +981,15 @@ function stageHtml(ctx, r) {
       </form>`;
   }
   if (ui.stage === 'booked') {
-    const until = new Date(p.bookedAt + CONST.holdMinutes * 60000);
+    // A trip stop is held from the planned arrival time; a nearby charger from now.
+    const until = new Date((p.arriveAt || p.bookedAt) + CONST.holdMinutes * 60000);
     const pass = p.pass
       ? `<p class="approved"><b>Approved.</b> Show plate <b>${esc(formatPlate(p.pass.plate))}</b> at the guardhouse, ${esc(fmtTime(new Date(p.pass.slotStart)))} to ${esc(fmtClock(new Date(p.pass.slotEnd)))}.</p>`
       : '';
     return `${journey}<h2>Bay held</h2>
       ${pass}
       <p class="saved">${esc(savingLine(p))}</p>
-      <p><b>${esc(p.name)}</b> is held for you for ${CONST.holdMinutes} minutes, until ${esc(fmtTime(until))}.</p>
+      <p><b>${esc(p.name)}</b> is held for you ${p.arriveAt ? `from your planned arrival at ${esc(fmtTime(new Date(p.arriveAt)))} for ${CONST.holdMinutes} minutes, until ${esc(fmtClock(until))}` : `for ${CONST.holdMinutes} minutes, until ${esc(fmtTime(until))}`}.</p>
       ${qrSvg(p.chargerId)}
       <p class="muted">Demo QR illustration. At the bay, scan the code on the charger to start.</p>
       <div class="btn-row"><button class="btn primary" type="button" data-act="start">Scan QR and start charging</button>
@@ -1028,6 +1031,7 @@ function stageHtml(ctx, r) {
 }
 
 function savingLine(p) {
+  if (p.arriveAt) return `Charging stop on your trip: ${p.kWhTarget.toFixed(1)} kWh, about ${formatDuration(p.stopMinutes)}.`;
   if (p.saving >= 0.01) return `You saved ${rm(p.saving)} vs the nearest charger.`;
   if (p.minutesVsNearest < 0) return `${formatDuration(-p.minutesVsNearest)} faster than the nearest charger.`;
   return 'Same as the nearest charger.';
@@ -1037,6 +1041,10 @@ function bind(root, ctx, ranking, car) {
   const box = root;
   root.querySelector('[data-reset]')?.addEventListener('click', () => document.getElementById('reset')?.click());
   box.querySelectorAll('[data-book]').forEach((btn) => btn.addEventListener('click', () => startBooking(root, ctx, ranking, car, btn.dataset.book)));
+  box.querySelectorAll('[data-book-stop]').forEach((btn) => btn.addEventListener('click', () => {
+    const s = lastTrip?.stops[Number(btn.dataset.bookStop)];
+    if (s) bookTripStop(root, ctx, car, s);
+  }));
   box.querySelectorAll('[data-detail]').forEach((btn) => btn.addEventListener('click', () => select(root, ctx, btn.dataset.detail, true)));
   const form = box.querySelector('#d-plate-form');
   if (form) {
@@ -1147,6 +1155,24 @@ async function book(root, ctx, ranking, c, car, visitor) {
   if (ctx.api) ctx.refresh();
 }
 
+// A long-trip charging stop: hold a highway DC bay for when the plan arrives there.
+// Highway sites are demo data, so the hold is kept on this device rather than on the shared server.
+function bookTripStop(root, ctx, car, s) {
+  const slotMinutes = Math.max(60, Math.ceil((CONST.holdMinutes + s.minutes) / 30) * 30);
+  addSession(ctx.state, { at: ctx.clock.getTime(), anonId: `Driver #${anonNumber(ctx.state)}`, role: 'trip', chargerId: s.charger.id, kWh: s.kWh, costRm: s.cost });
+  ui.flash = '';
+  ui.pick = {
+    chargerId: s.charger.id, name: s.charger.name, price: s.price, kWhTarget: s.kWh, power: Math.min(s.charger.kw, car.dcKw),
+    batteryKwh: car.batteryKwh, startPct: Math.round(s.arrivePct), bookedAt: ctx.clock.getTime(),
+    session: { kWh: 0, minutes: 0 }, pass: null, bookingRef: null, slotEnd: s.at + slotMinutes * 60000,
+    walk: null, saving: 0, minutesVsNearest: 0, arriveAt: s.at, stopMinutes: s.minutes,
+  };
+  ui.stage = 'booked';
+  ctx.state.booking = { chargerId: s.charger.id, at: ctx.clock.getTime() };
+  ctx.save();
+  goActivity(root, ctx);
+}
+
 // Bookings and charging live on the Activity tab.
 function goActivity(root, ctx) {
   if (location.hash !== '#activity') location.hash = '#activity';
@@ -1177,6 +1203,7 @@ function stopTimer() {
 }
 
 let tripLayer = null;
+let lastTrip = null; // the long-trip plan on screen, for "Book this stop"
 function drawRoadLine(layer, coords, alt = false) {
   L.polyline(coords, { className: alt ? 'road-casing alt' : 'road-casing', weight: alt ? 8 : 10, interactive: false }).addTo(layer);
   return L.polyline(coords, { className: alt ? 'road-line alt' : 'road-line', weight: alt ? 5 : 6 }).addTo(layer);
