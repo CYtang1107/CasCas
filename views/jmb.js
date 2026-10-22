@@ -12,6 +12,7 @@ import { recoveryHtml, quietHtml, maintenanceHtml, bindMaintenance, reportCsv, d
 import { bayStatus, maintenanceCost } from '../engine/maintenance.js';
 import { filterSessions } from '../engine/insights.js';
 import { renderCpo } from './cpo.js';
+import { installJmbTabs } from './jmb-tabs.js';
 import { recordedRevenueHtml, bindRecordedRevenue } from './jmb-recorded.js';
 
 let condoId = null;
@@ -180,7 +181,10 @@ export function renderJmb(root, ctx) {
   const $ = (sel) => root.querySelector(sel);
   $('#j-condo').value = condo.id;
   $('#j-condo').addEventListener('change', (e) => { if (e.target.value === 'cpo') { location.hash = '#cpo'; return; } condoId = e.target.value; history.replaceState(null, '', `#${condoId}`); ctx.rerender(); });
-  root.querySelectorAll('[data-jump]').forEach((b) => b.addEventListener('click', () => document.getElementById(b.dataset.jump)?.scrollIntoView({ block: 'start' })));
+  if (!installJmbTabs(root)) {
+    // Keep the original sidebar available if a future markup version differs.
+    root.querySelectorAll('[data-jump]').forEach((b) => b.addEventListener('click', () => document.getElementById(b.dataset.jump)?.scrollIntoView({ block: 'start' })));
+  }
   bindProposal(root, ctx, condo, token);
   root.querySelector('#j-pause')?.addEventListener('click', async () => {
     const next = { ...s, enabled: !s.enabled };

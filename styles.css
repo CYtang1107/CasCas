@@ -1237,3 +1237,48 @@ main:has(> .loading) { min-height: 100vh; min-height: 100dvh; }
 .vehicle > *, .vcar { min-width: 0; max-width: 100%; }
 .vspec { flex-wrap: wrap; max-width: 100%; }
 .srow2 { flex-wrap: wrap; gap: 8px; }
+
+/* JMB tabs — scoped to the tabbed portal; other dashboard screens are unchanged. */
+.portal.jmb-tab-layout { display: block; }
+.portal.jmb-tab-layout > .jmb { min-width: 0; }
+.portal.jmb-tab-layout .jmb-tabs {
+  display: flex; gap: 8px; flex-wrap: nowrap; overflow-x: auto; overscroll-behavior-x: contain;
+  position: sticky; top: 96px; z-index: 30;
+  padding: 12px 0 14px; margin: 0 0 20px;
+  border: 0; border-bottom: 1px solid var(--ink-line, var(--line));
+  background: var(--bg); scrollbar-width: thin;
+}
+.portal.jmb-tab-layout .jmb-tabs button {
+  white-space: nowrap; flex: 0 0 auto; min-height: 42px;
+  border: 1px solid var(--line); border-radius: 6px;
+  padding: 10px 16px; color: var(--muted); background: var(--surface);
+  font: 600 .9rem/1.2 var(--body); cursor: pointer;
+}
+.portal.jmb-tab-layout .jmb-tabs button:hover,
+.portal.jmb-tab-layout .jmb-tabs button:focus-visible { color: var(--fg); border-color: var(--fg); background: var(--surface); }
+.portal.jmb-tab-layout .jmb-tabs button[aria-selected="true"] {
+  color: var(--fg); background: var(--lime, var(--accent-soft));
+  border-color: var(--fg); box-shadow: 2px 2px 0 var(--ink-line, var(--line));
+}
+.portal.jmb-tab-layout .jmb-panel-stack { min-width: 0; }
+.portal.jmb-tab-layout .jmb-tab-panel { display: grid; gap: 20px; min-width: 0; }
+.portal.jmb-tab-layout .jmb-tab-panel[hidden] { display: none !important; }
+.portal.jmb-tab-layout .jmb-panel-intro { margin-bottom: 2px; }
+.portal.jmb-tab-layout .jmb-panel-intro h2 { margin: 0 0 4px; }
+.portal.jmb-tab-layout .jmb-panel-intro .muted { margin: 0; }
+.portal.jmb-tab-layout .jmb-tab-panel > .grid2,
+.portal.jmb-tab-layout .jmb-tab-panel > .kpis { margin-bottom: 0; }
+.portal.jmb-tab-layout #j-s-money { grid-template-columns: minmax(0,1fr); }
+.portal.jmb-tab-layout #j-s-live,
+.portal.jmb-tab-layout #j-s-private { min-width: 0; }
+.portal.jmb-tab-layout #j-s-private { display: grid; gap: 20px; }
+.portal.jmb-tab-layout .jmb-login,
+.portal.jmb-tab-layout .jmb-auth { margin-bottom: 14px; }
+@media (max-width: 1000px) {
+  .portal.jmb-tab-layout .jmb-tabs { position: static; }
+}
+@media (max-width: 767px) {
+  .portal.jmb-tab-layout .jmb-tabs { margin: 0 -2px 14px; padding: 4px 2px 12px; }
+  .portal.jmb-tab-layout .jmb-tabs button { min-height: 44px; padding: 10px 14px; }
+  .portal.jmb-tab-layout .jmb-tab-panel { gap: 16px; }
+}
