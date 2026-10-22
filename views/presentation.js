@@ -165,7 +165,12 @@ function decoratePanel() {
   sheet.inert = state !== 'active'; // the ghost is not reachable by Tab or screen readers
   const open = String(state === 'active');
   if (tab.getAttribute('aria-expanded') !== open) tab.setAttribute('aria-expanded', open);
-  const label = state === 'active' ? 'Hide options' : 'Charge options';
+  // Say what is inside: chargers or trip stops that can be booked, and how many.
+  const stops = sheet.querySelectorAll('[data-book-stop]').length;
+  const picks = sheet.querySelectorAll('[data-pick]').length;
+  const label = state === 'active' ? 'Hide options'
+    : stops ? `Book charging stop${stops === 1 ? '' : 's'} (${stops})`
+      : picks ? `Book a charger (${picks})` : 'Charge options';
   const text = tab.querySelector('span');
   if (text && text.textContent !== label) text.textContent = label;
   sheet.querySelectorAll('[data-pick]').forEach((card) => card.classList.toggle('is-selected', card.dataset.pick === panel.selected));
