@@ -19,23 +19,39 @@ export function downloadCsv(name, text) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+// Receipts → costs → surplus → split, led by the answer the JMB cares about.
 export function recoveryHtml(condo, sim) {
   const r = sim.recovery;
   const line = (label, v, cls = '') => `<tr class="${cls}"><td>${label}</td><td>${v}</td></tr>`;
+  const head = (label) => `<tr class="group"><th scope="rowgroup" colspan="2">${label}</th></tr>`;
+  const costs = r.electricityCost + r.variableCost + r.fixedMonthly + r.maintenanceRm;
+  const covered = r.breakEvenKwh ? r.kWh / r.breakEvenKwh : 0;
+  const lead = r.operatingSurplus > 0
+    ? `This month the JMB receives <b>${rm0(r.jmbIncome)}</b> for the maintenance fund: ${pct(condo.jmbShare)} of a ${rm0(r.operatingSurplus)} surplus, or <b>${rm(r.perUnit)} per unit</b>.`
+    : `This month charging does not yet cover its costs (${signed(r.operatingSurplus)}), so nothing is paid out and residents are not charged for the gap.`;
   return `
     <section class="card recovery"><h3>Maintenance cost recovery</h3>
-      <p class="muted">Counted the way our proposal does (section 6.2): every cost comes out before the JMB is paid.</p>
+      <p class="recovery-lead">${lead}</p>
       <div class="tbl"><table><tbody>
-        ${line('Gross charging receipts', rm0(r.revenue))}
-        ${line('− TNB electricity', rm0(r.electricityCost))}
-        ${line(`− Other variable costs (${rm(CONST.otherCostPerKwh)}/kWh)`, rm0(r.variableCost))}
-        ${line(`− Fixed costs (network, insurance, service: ${rm0(CONST.fixedPerBayMonthly)}/bay)`, rm0(r.fixedMonthly))}
-        ${line('− Repairs and services logged this month', rm0(r.maintenanceRm))}
+        ${head('Charging receipts')}
+        ${line('From residents', rm0(sim.residentRevenue))}
+        ${line('From outside drivers (shared bays)', rm0(sim.visitorRevenue))}
+        ${line('Total receipts', rm0(r.revenue), 'sub')}
+        ${head('Costs, paid first')}
+        ${line(`Electricity (${num(r.kWh)} kWh × ${rm(CONST.electricityCostPerKwh)}, sub-metered)`, `− ${rm0(r.electricityCost)}`)}
+        ${line(`Payment, platform and other fees (${rm(CONST.otherCostPerKwh)}/kWh)`, `− ${rm0(r.variableCost)}`)}
+        ${line(`Network, insurance and service (${condo.bays} bays × ${rm0(CONST.fixedPerBayMonthly)})`, `− ${rm0(r.fixedMonthly)}`)}
+        ${line('Repairs and services logged this month', `− ${rm0(r.maintenanceRm)}`)}
+        ${line('Total costs', `− ${rm0(costs)}`, 'sub')}
         ${line('Operating surplus', signed(r.operatingSurplus), 'total')}
-        ${line(`JMB share (${pct(condo.jmbShare)}), to the maintenance fund`, rm0(r.jmbIncome), 'hero-row')}
-        ${line('Charging partner (CPO) share', rm0(r.partnerIncome))}
+        ${head('Split of the surplus')}
+        ${line(`JMB maintenance fund (${pct(condo.jmbShare)})`, rm0(r.jmbIncome), 'hero-row')}
+        ${line(`Charging partner, who funds and runs the chargers (${pct(1 - condo.jmbShare)})`, rm0(r.partnerIncome))}
       </tbody></table></div>
-      <p class="muted">Break-even: ${r.breakEvenKwh ? `${num(r.breakEvenKwh)} kWh a month` : 'not reached at these prices'} · delivered ${num(r.kWh)} kWh · ${rm(r.perUnit)} per unit per month. Simulated demand, not measured.</p>
+      ${r.breakEvenKwh ? `<div class="breakeven"><p><b>Break-even:</b> ${num(r.breakEvenKwh)} kWh a month · delivered ${num(r.kWh)} kWh (${covered >= 1 ? `${covered.toFixed(1)}× break-even` : `${pct(covered)} of the way`})</p>
+        <div class="bar" role="img" aria-label="Energy delivered compared with break-even"><span style="width:${Math.min(100, covered * 100)}%"></span></div></div>`
+        : '<p class="muted">Break-even is not reached at these prices.</p>'}
+      <p class="muted">Costs follow proposal section 6.1. Demand is simulated, not measured.</p>
     </section>`;
 }
 

@@ -1305,3 +1305,13 @@ main:has(> .loading) { min-height: 100vh; min-height: 100dvh; }
 .next-stops ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
 .next-stops li { display: grid; gap: 2px; }
 .next-stops .muted { font-size: .8rem; }
+/* JMB: cost recovery reads receipts → costs → surplus → split. */
+.recovery-lead { font-size: 1rem; line-height: 1.5; margin: 0; }
+.recovery tr.group th { text-align: left; font-size: .75rem; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); padding-top: 14px; border: 0; }
+.recovery tr.sub td { font-weight: 600; border-top: 1px solid var(--line); }
+.recovery td:first-child { padding-right: 12px; }
+.breakeven { display: grid; gap: 6px; }
+.breakeven p { margin: 0; font-size: .88rem; }
+.breakeven .bar span { background: var(--accent); }
+/* JMB: Fixed hours vs Auto — the mode in use is tagged; the better earner is outlined. */
+.cmp span em.chip { font-style: normal; font-size: .7rem; padding: 2px 6px; margin-left: 4px; vertical-align: 1px; }
