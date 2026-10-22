@@ -51,7 +51,6 @@ export function recoveryHtml(condo, sim) {
       ${r.breakEvenKwh ? `<div class="breakeven"><p><b>Break-even:</b> ${num(r.breakEvenKwh)} kWh a month · delivered ${num(r.kWh)} kWh (${covered >= 1 ? `${covered.toFixed(1)}× break-even` : `${pct(covered)} of the way`})</p>
         <div class="bar" role="img" aria-label="Energy delivered compared with break-even"><span style="width:${Math.min(100, covered * 100)}%"></span></div></div>`
         : '<p class="muted">Break-even is not reached at these prices.</p>'}
-      <p class="muted">Costs follow proposal section 6.1. Demand is simulated, not measured.</p>
     </section>`;
 }
 
