@@ -266,7 +266,8 @@ export function renderDriver(root, ctx, which = 'home') {
     </section></details>
     <div class="charging-workspace">
     ${mapRow('compact')}
-    <aside class="recommendation-sheet" data-sheet="medium" aria-label="Charging recommendations">
+    <button type="button" class="panel-tab" data-panel-toggle aria-controls="d-sheet" aria-expanded="false">${IC.bolt}<span>Charge options</span></button>
+    <aside class="recommendation-sheet" id="d-sheet" data-sheet="medium" data-panel="inactive" aria-label="Charging recommendations">
       <div class="sheet-toolbar"><span>Charge options</span><label class="sheet-sizes"><span class="sr-only">Recommendation view</span>
         <select data-sheet-size aria-label="Recommendation view" aria-controls="d-results">
           <option value="compact">Compact</option>
@@ -560,7 +561,7 @@ function bindAccount(root, ctx) {
 function activityHtml(ctx, r) {
   if (ui.stage !== 'pick') return stageHtml(ctx, r);
   const flash = scopedFlashHtml(ui.flash, ui.flashTarget, 'activity');
-  const name = (id) => ctx.world.chargers.find((c) => c.id === id)?.name || id;
+  const name = (id) => [...ctx.world.chargers, ...HIGHWAY_CHARGERS].find((c) => c.id === id)?.name || id;
   const list = ctx.state.sessions.filter((s) => s.status === 'demo_completed' || s.status === 'completed')
     .sort((a, b) => b.at - a.at).slice(0, 10);
   const source = document.getElementById('data-source')?.textContent || '';
@@ -609,6 +610,7 @@ function update(root, ctx) {
   drawMarkers(root, ctx, origin, ranking, car);
   drawTrip(origin, trip, place, tripRoad);
   drawPickRoute(origin, trip, ctx);
+  lastTrip = trip?.ok ? trip : null;
   if ($('#d-results')) $('#d-results').innerHTML = trip ? tripHtml(trip, place, ctx, tripRoad) : pickHtml(ranking, ctx);
   if ($('#d-home-body')) $('#d-home-body').innerHTML = homeHtml(ranking, ctx, trip, place);
   if ($('#d-activity')) $('#d-activity').innerHTML = activityHtml(ctx, ranking);
@@ -815,18 +817,19 @@ function tripHtml(t, place, ctx, rd = null) {
       items.push(`<li class="trip-stop"><div><span class="stop-tag">Charging stop</span><b>${esc(s.charger.name)}</b>
         <span class="muted">${esc(s.charger.operator)} · DC ${s.charger.kw} kW · ${rm(s.price)}/kWh · ${esc(fmtTime(new Date(s.at)))}</span></div>
         <div class="charge-bar">${pctTag(s.arrivePct)}<span class="track"><span style="left:${s.arrivePct}%;width:${s.departPct - s.arrivePct}%"></span></span>${pctTag(s.departPct)}</div>
-        <p class="muted">${formatDuration(s.minutes)} · ${s.kWh.toFixed(1)} kWh · ${rm(s.cost)}</p></li>`);
+        <p class="muted">${formatDuration(s.minutes)} · ${s.kWh.toFixed(1)} kWh · ${rm(s.cost)}</p>
+        ${ui.stage === 'pick' ? `<div class="btn-row"><button class="btn primary small" type="button" data-book-stop="${i}">Book this stop</button></div>` : ''}</li>`);
     }
   });
   items.push(`<li class="trip-pt"><div><span class="muted">Arrive</span><b>${esc(place.name)}</b></div>${pctTag(t.arrivePct)}</li>`);
   return `${head}
     <p class="trip-total"><b>${formatDuration(tot.totalMin)}</b> total trip · ${Math.round(tot.km)} km · ${formatDuration(tot.chargeMin || 0.01)} charging${tot.cost ? ` · ${rm(tot.cost)} to charge` : ''}</p>
+    ${t.stops.length > 1 && ui.stage === 'pick' ? `<div class="btn-row"><button class="btn primary grow" type="button" data-book-trip>Book all ${t.stops.length} stops · ${rm(tot.cost)}</button></div>` : ''}
     <ol class="trip">${items.join('')}</ol>
     ${roadNote(t, rd, ctx)}
     <p class="muted">${t.stops.length ? 'CasSama charges only what the next leg needs, and never past 80%, where fast charging slows down, so stops stay short.' : `No stop needed: you arrive with ${Math.round(t.arrivePct)}%.`} Highway chargers are demo data.</p>
     ${stepsHtml(rd)}
-    <div class="btn-row"><a class="btn primary grow" href="${esc(t.directionsUrl)}" target="_blank" rel="noopener">${IC.nav}Start in Google Maps</a>
-      <a class="btn" href="https://waze.com/ul?ll=${(t.stops[0]?.charger || place).lat},${(t.stops[0]?.charger || place).lng}&navigate=yes" target="_blank" rel="noopener">Waze${t.stops.length ? ' to stop 1' : ''}</a></div>`;
+    <div class="btn-row"><a class="btn primary grow" href="${esc(t.directionsUrl)}" target="_blank" rel="noopener">${IC.nav}Start in Google Maps</a></div>`;
 }
 
 // Where the trip numbers come from, and what traffic usually adds at this hour.
@@ -932,7 +935,7 @@ const facts = (c) => `<div class="facts">${availChip(c.charger, c.occupancy)}
 
 function heroCard(c) {
   return `
-    <article class="pick hero">
+    <article class="pick hero" data-pick="${esc(c.charger.id)}">
       <div class="hero-tags">${c.isSharedVisit ? '<span class="chip amber-tag">Shared now</span>' : ''}${c.isResident ? `<span class="chip">${IC.home}Your condo</span>` : ''}</div>
       <h3>${esc(c.charger.name)}</h3>
       <p class="muted">${esc(c.charger.operator)} · ${esc(c.charger.connectors.join(', '))}</p>
@@ -947,7 +950,7 @@ function heroCard(c) {
 
 function smallCard(c, i) {
   return `
-    <article class="pick">
+    <article class="pick" data-pick="${esc(c.charger.id)}">
       <div class="pick-top"><span class="rank">${i + 1}</span>
         <div><h3>${esc(c.charger.name)}</h3><p class="muted">${esc(c.charger.operator)}</p></div></div>
       ${facts(c)}
@@ -988,9 +991,15 @@ function journeyHtml(stage) {
   return `<ol class="journey" aria-label="Charging stages">${(ui.pick?.serverCharging ? ['Choose', 'Booked', 'OCPP status', 'Complete'] : ['Choose', 'Bay held', 'Charging', 'Check-in']).map((label, i) => `<li ${i === active ? 'aria-current="step"' : ''} class="${i < active ? 'complete' : ''}"><span aria-hidden="true">${i + 1}</span>${label}</li>`).join('')}</ol>`;
 }
 
+// The other stops held on the same trip, shown under the current stop.
+function nextStopsHtml(p) {
+  if (!p?.nextStops?.length) return '';
+  return `<div class="next-stops"><h3>Also held on this trip</h3><ul>${p.nextStops.map((s) => `<li><b>${esc(s.charger.name)}</b><span class="muted">from ${esc(fmtTime(new Date(s.at)))} · ${s.kWh.toFixed(1)} kWh · ${rm(s.cost)}</span></li>`).join('')}</ul></div>`;
+}
+
 function stageHtml(ctx, r) {
   const p = ui.pick;
-  const journey = journeyHtml(ui.stage);
+  const journey = journeyHtml(ui.stage) + nextStopsHtml(p);
   if (ui.stage === 'plate') {
     const c = r.results.find((x) => x.charger.id === ui.pending);
     return `${journey}<h2>Visitor details</h2>
@@ -1004,7 +1013,8 @@ function stageHtml(ctx, r) {
       </form>`;
   }
   if (ui.stage === 'booked') {
-    const until = new Date(p.bookedAt + CONST.holdMinutes * 60000);
+    // A trip stop is held from the planned arrival time; a nearby charger from now.
+    const until = new Date((p.arriveAt || p.bookedAt) + CONST.holdMinutes * 60000);
     const pass = p.pass
       ? `<p class="approved"><b>Approved.</b> Show plate <b>${esc(formatPlate(p.pass.plate))}</b> at the guardhouse, ${esc(fmtTime(new Date(p.pass.slotStart)))} to ${esc(fmtClock(new Date(p.pass.slotEnd)))}.</p>`
       : '';
@@ -1026,7 +1036,7 @@ function stageHtml(ctx, r) {
     return `${journey}<h2>Bay held (demo)</h2>
       ${pass}
       <p class="saved">${esc(savingLine(p))}</p>
-      <p><b>${esc(p.name)}</b> is held for you for ${CONST.holdMinutes} minutes, until ${esc(fmtTime(until))}.</p>
+      <p><b>${esc(p.name)}</b> is held for you ${p.arriveAt ? `from your planned arrival at ${esc(fmtTime(new Date(p.arriveAt)))} for ${CONST.holdMinutes} minutes, until ${esc(fmtClock(until))}` : `for ${CONST.holdMinutes} minutes, until ${esc(fmtTime(until))}`}.</p>
       ${qrSvg(p.chargerId)}
       <p class="muted">Demo QR illustration. This offline/public-charger experience simulates charging; no charger is started.</p>
       <div class="btn-row"><button class="btn primary" type="button" data-act="start">Start simulated charging</button>
@@ -1117,6 +1127,7 @@ function stageHtml(ctx, r) {
 }
 
 function savingLine(p) {
+  if (p.arriveAt) return `Charging stop on your trip: ${p.kWhTarget.toFixed(1)} kWh, about ${formatDuration(p.stopMinutes)}.`;
   if (p.saving >= 0.01) return `You saved ${rm(p.saving)} vs the nearest charger.`;
   if (p.minutesVsNearest < 0) return `${formatDuration(-p.minutesVsNearest)} faster than the nearest charger.`;
   return 'Same as the nearest charger.';
@@ -1166,6 +1177,15 @@ function bind(root, ctx, ranking, car) {
   const box = root;
   root.querySelector('[data-reset]')?.addEventListener('click', () => document.getElementById('reset')?.click());
   box.querySelectorAll('[data-book]').forEach((btn) => btn.addEventListener('click', () => startBooking(root, ctx, ranking, car, btn.dataset.book)));
+  box.querySelectorAll('[data-book-stop]').forEach((btn) => btn.addEventListener('click', () => {
+    const s = lastTrip?.stops[Number(btn.dataset.bookStop)];
+    if (s) bookTripStop(root, ctx, car, s);
+  }));
+  // One tap holds every stop on the trip; Activity moves on to the next stop after each check-in.
+  box.querySelector('[data-book-trip]')?.addEventListener('click', () => {
+    const [first, ...rest] = lastTrip?.stops || [];
+    if (first) bookTripStop(root, ctx, car, first, rest);
+  });
   box.querySelectorAll('[data-detail]').forEach((btn) => btn.addEventListener('click', () => select(root, ctx, btn.dataset.detail, true)));
   const form = box.querySelector('#d-plate-form');
   if (form) {
@@ -1264,6 +1284,14 @@ function bind(root, ctx, ranking, car) {
     }
     ctx.state.booking = null;
     ctx.save();
+    // Trip booked as a whole: carry on to the next held stop.
+    const [next, ...rest] = ui.pick.nextStops || [];
+    if (next) {
+      bookTripStop(root, ctx, CARS.find((c) => c.id === ui.carId) || CARS[0], next, rest);
+      ui.flash = `Thanks for checking in. Next stop: ${next.charger.name}.`;
+      update(root, ctx);
+      return;
+    }
     ui.flash = ok ? 'Thanks. Your check-in raised this charger\'s reliability score.' : 'Thanks. The JMB and operator can now see this problem.';
     ui.flashTarget = 'activity';
     stopChargingPoll();
@@ -1405,6 +1433,24 @@ async function book(root, ctx, ranking, c, car, visitor) {
   if (ctx.api) ctx.refresh();
 }
 
+// A long-trip charging stop: hold a highway DC bay for when the plan arrives there.
+// Highway sites are demo data, so the hold is kept on this device rather than on the shared server.
+function bookTripStop(root, ctx, car, s, nextStops = []) {
+  const slotMinutes = Math.max(60, Math.ceil((CONST.holdMinutes + s.minutes) / 30) * 30);
+  addSession(ctx.state, { at: ctx.clock.getTime(), anonId: `Driver #${anonNumber(ctx.state)}`, role: 'trip', chargerId: s.charger.id, kWh: s.kWh, costRm: s.cost });
+  ui.flash = '';
+  ui.pick = {
+    chargerId: s.charger.id, name: s.charger.name, price: s.price, kWhTarget: s.kWh, power: Math.min(s.charger.kw, car.dcKw),
+    batteryKwh: car.batteryKwh, startPct: Math.round(s.arrivePct), bookedAt: ctx.clock.getTime(),
+    session: { kWh: 0, minutes: 0 }, pass: null, bookingRef: null, slotEnd: s.at + slotMinutes * 60000,
+    walk: null, saving: 0, minutesVsNearest: 0, arriveAt: s.at, stopMinutes: s.minutes, nextStops,
+  };
+  ui.stage = 'booked';
+  ctx.state.booking = { chargerId: s.charger.id, at: ctx.clock.getTime() };
+  ctx.save();
+  goActivity(root, ctx);
+}
+
 // Bookings and charging live on the Activity tab.
 function goActivity(root, ctx) {
   if (location.hash !== '#activity') location.hash = '#activity';
@@ -1454,6 +1500,7 @@ function stopTimer() {
 }
 
 let tripLayer = null;
+let lastTrip = null; // the long-trip plan on screen, for "Book this stop"
 function drawRoadLine(layer, coords, alt = false) {
   L.polyline(coords, { className: alt ? 'road-casing alt' : 'road-casing', weight: alt ? 8 : 10, interactive: false }).addTo(layer);
   return L.polyline(coords, { className: alt ? 'road-line alt' : 'road-line', weight: alt ? 5 : 6 }).addTo(layer);
@@ -1541,6 +1588,8 @@ function initMap(el, fallback) {
   }).addTo(map);
   tiles.on('tileerror', () => { fallback.hidden = false; });
   layer = L.layerGroup().addTo(map);
+  // A click on empty map (not a marker, popup or control) tells the floating panel to step back.
+  map.on('click', () => document.dispatchEvent(new CustomEvent('cassama:mapclick')));
 }
 
 // What the filters need to know about one charger right now.
@@ -1773,11 +1822,44 @@ function select(root, ctx, id, fromList) {
   ui.selected = id;
   if (tab !== 'map' && tab !== 'plan') { location.hash = '#map'; return; }
   if (!last) return;
-  renderDetail(root, ctx, last.ranking, last.car);
+  // Phone, Plan page: a tapped pin that is in the options list opens that card instead of a second sheet.
+  const phone = matchMedia('(max-width: 767px)').matches;
+  const inList = !!root.querySelector(`#d-sheet [data-pick="${CSS.escape(id)}"]`);
+  if (!(phone && tab === 'plan' && !fromList && inList)) renderDetail(root, ctx, last.ranking, last.car);
+  highlightMarker(id);
+  // The Plan page's floating panel follows the selection (views/presentation.js).
+  document.dispatchEvent(new CustomEvent('cassama:select', { detail: { id, fromList } }));
   if (fromList && map) {
     const m = markers.get(id);
-    if (m) { map.setView(m.getLatLng(), Math.max(map.getZoom(), 15)); m.openPopup(); }
-    root.querySelector('#d-map-row')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    if (m) {
+      if (map.getZoom() < 13) map.setView(m.getLatLng(), 15); else if (!map.getBounds().contains(m.getLatLng())) map.panTo(m.getLatLng());
+      keepClearOfPanel(m);
+      m.openPopup();
+    }
+    if (tab === 'map') root.querySelector('#d-map-row')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+}
+
+// Outline the selected pin without redrawing every marker.
+function highlightMarker(id) {
+  for (const [key, m] of markers) m.getElement()?.querySelector('.pin')?.classList.toggle('sel', key === id);
+}
+
+// Plan page: if the open charge-options panel covers the pin, slide the map just enough to show it.
+function keepClearOfPanel(m) {
+  const sheet = document.querySelector('.charging-workspace .recommendation-sheet[data-panel="active"]');
+  const box = map?.getContainer();
+  if (!sheet || !box) return;
+  const s = sheet.getBoundingClientRect();
+  const b = box.getBoundingClientRect();
+  const p = map.latLngToContainerPoint(m.getLatLng());
+  const side = s.width < b.width * 0.8; // beside the map (desktop) or across it (phone)
+  if (side) {
+    const free = s.left - b.left - 24;
+    if (p.x > free) map.panBy([p.x - free / 2, 0]);
+  } else {
+    const free = s.top - b.top - 24;
+    if (p.y > free && free > 80) map.panBy([0, p.y - free / 2]);
   }
 }
 
@@ -1822,6 +1904,12 @@ function renderDetail(root, ctx, ranking, car) {
     startBooking(root, ctx, ranking, car, d.id);
     root.querySelector('#d-results')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   });
+  // A slow AC bay is fine for a longer stay: switch the stay, re-rank, then book in one tap.
+  aside.querySelector('[data-detail-stay]')?.addEventListener('click', (e) => {
+    ui.parkFor = e.currentTarget.dataset.detailStay;
+    update(root, ctx);
+    if (last?.ranking.results.some((c) => c.charger.id === d.id)) startBooking(root, ctx, last.ranking, last.car, d.id);
+  });
 }
 
 function detailHtml(d, timing = '') {
@@ -1852,7 +1940,9 @@ function detailHtml(d, timing = '') {
     <h4>Recent check-ins (${d.checkinCount})</h4>
     ${checkins}
     <div class="btn-row">
-      ${d.bookable && ui.stage === 'pick' ? `<button class="btn primary" type="button" data-detail-book="${esc(d.id)}">Book this bay</button>` : ''}
+      ${ui.stage !== 'pick' ? '<a class="btn primary" href="#activity">You have a booking: see Activity</a>'
+        : d.bookable ? `<button class="btn primary" type="button" data-detail-book="${esc(d.id)}">Book this bay</button>`
+          : d.tooSlow && ui.parkFor !== 'overnight' ? `<button class="btn primary" type="button" data-detail-stay="${ui.parkFor === '2h' ? '4h' : '2h'}">Park ${ui.parkFor === '2h' ? '4' : '2'} h and book</button>` : ''}
       <a class="btn" href="${esc(d.directionsUrl)}" target="_blank" rel="noopener">Directions</a>
     </div>`;
 }

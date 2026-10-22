@@ -41,12 +41,24 @@ export function renderJmb(root, ctx) {
   const asMode = (mode) => ({ ...s, enabled: true, mode, days: s.days });
   const simAuto = simulateCondoMonth({ ...condo, sharing: asMode('auto') }, charger, start, { maintenanceRm });
   const simHours = simulateCondoMonth({ ...condo, sharing: asMode('hours') }, charger, start, { maintenanceRm });
-  const gain = simAuto.jmbIncome - simHours.jmbIncome;
+  // Which mode the condo uses now, which earns more, and why. The better one is highlighted, not always Auto.
+  const h12 = (h) => `${h % 12 || 12} ${h < 12 || h === 24 ? 'AM' : 'PM'}`;
+  const inUse = s.mode === 'auto' ? 'auto' : 'hours';
+  const best = simAuto.jmbIncome > simHours.jmbIncome ? 'auto' : 'hours';
+  const diff = Math.abs(simAuto.jmbIncome - simHours.jmbIncome);
+  const hoursOpen = { hours: openHours(asMode('hours')), auto: openHours(asMode('auto')) };
+  const option = (mode, label, x) => `<div class="${mode === best ? 'win' : ''}">
+      <span>${label}${mode === inUse ? ' <em class="chip on">In use</em>' : ''}</span><b>${rm0(x.jmbIncome)}</b>
+      <small>${hoursOpen[mode]} h open on a weekday · ${num(x.visitorKwh)} kWh to visitors</small></div>`;
+  const why = best === 'hours' && hoursOpen.auto > hoursOpen.hours
+    ? ' Auto stays open longer but keeps more bays back for residents expected each hour, so fewer visitors can charge.' : '';
+  const verdict = diff < 1 ? 'Both settings earn about the same here.'
+    : best === inUse ? `Your current setting earns the most: about <b>${rm0(diff)}</b> a month more than ${best === 'auto' ? 'fixed hours' : 'Auto'}.${why}`
+      : `Switching to ${best === 'auto' ? 'Auto' : `fixed ${h12(s.start)}–${h12(s.end)}`} would add about <b>${rm0(diff)}</b> a month for the JMB. Propose it to residents below.${why}`;
   const autoHtml = `<div class="auto-compare">
-    <p><b>Auto sharing vs fixed hours</b> (simulated month)</p>
-    <div class="cmp"><div><span>Fixed ${s.start}:00–${s.end}:00</span><b>${rm0(simHours.jmbIncome)}</b><small>${openHours(asMode('hours'))} h open on a weekday</small></div>
-      <div class="win"><span>Auto</span><b>${rm0(simAuto.jmbIncome)}</b><small>${openHours(asMode('auto'))} h open on a weekday</small></div></div>
-    <p class="muted">${gain > 0 ? `Auto would add about <b>${rm0(gain)}</b> a month for the JMB` : 'Fixed hours already cover the idle time'}, still keeping ${s.reservedBays} bays for residents and closing before the evening rush.</p>
+    <p><b>Fixed hours vs Auto</b> · JMB share after all costs, simulated month</p>
+    <div class="cmp">${option('hours', `Fixed ${h12(s.start)}–${h12(s.end)}`, simHours)}${option('auto', 'Auto', simAuto)}</div>
+    <p class="muted">${verdict}${s.enabled ? '' : ' Sharing is paused now, so neither runs until it is resumed.'} Both keep ${s.reservedBays} bays for residents.</p>
   </div>`;
   const sinkingYear = 0.1 * condo.monthlyFee * condo.units * 12;
   const boost = (sim.jmbIncome * 12) / sinkingYear;
@@ -62,8 +74,7 @@ export function renderJmb(root, ctx) {
   <div class="jmb">
     <div class="view-head">
       <div><h1>${esc(condo.name)}</h1>
-        <p class="context-line">JMB dashboard · ${esc(start.toLocaleString('en-MY', { month: 'long', year: 'numeric' }))}</p>
-        <p class="muted">${condo.units} units · ${condo.bays} charging bays · the JMB keeps ${pct(condo.jmbShare)} of the margin, the charging partner keeps the rest</p></div>
+        <p class="context-line">JMB dashboard · ${esc(start.toLocaleString('en-MY', { month: 'long', year: 'numeric' }))}</p></div>
       <label class="field inline">Condo <select id="j-condo"><option value="cpo">CPO: all sites</option>${condos.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select></label>
     </div>
 
