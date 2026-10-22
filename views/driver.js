@@ -799,6 +799,7 @@ function tripHtml(t, place, ctx, rd = null) {
   items.push(`<li class="trip-pt"><div><span class="muted">Arrive</span><b>${esc(place.name)}</b></div>${pctTag(t.arrivePct)}</li>`);
   return `${head}
     <p class="trip-total"><b>${formatDuration(tot.totalMin)}</b> total trip · ${Math.round(tot.km)} km · ${formatDuration(tot.chargeMin || 0.01)} charging${tot.cost ? ` · ${rm(tot.cost)} to charge` : ''}</p>
+    ${t.stops.length > 1 && ui.stage === 'pick' ? `<div class="btn-row"><button class="btn primary grow" type="button" data-book-trip>Book all ${t.stops.length} stops · ${rm(tot.cost)}</button></div>` : ''}
     <ol class="trip">${items.join('')}</ol>
     ${roadNote(t, rd, ctx)}
     <p class="muted">${t.stops.length ? 'CasSama charges only what the next leg needs, and never past 80%, where fast charging slows down, so stops stay short.' : `No stop needed: you arrive with ${Math.round(t.arrivePct)}%.`} Highway chargers are demo data.</p>
@@ -965,9 +966,15 @@ function journeyHtml(stage) {
   return `<ol class="journey" aria-label="Charging stages">${['Choose', 'Bay held', 'Charging', 'Check-in'].map((label, i) => `<li ${i === active ? 'aria-current="step"' : ''} class="${i < active ? 'complete' : ''}"><span aria-hidden="true">${i + 1}</span>${label}</li>`).join('')}</ol>`;
 }
 
+// The other stops held on the same trip, shown under the current stop.
+function nextStopsHtml(p) {
+  if (!p?.nextStops?.length) return '';
+  return `<div class="next-stops"><h3>Also held on this trip</h3><ul>${p.nextStops.map((s) => `<li><b>${esc(s.charger.name)}</b><span class="muted">from ${esc(fmtTime(new Date(s.at)))} · ${s.kWh.toFixed(1)} kWh · ${rm(s.cost)}</span></li>`).join('')}</ul></div>`;
+}
+
 function stageHtml(ctx, r) {
   const p = ui.pick;
-  const journey = journeyHtml(ui.stage);
+  const journey = journeyHtml(ui.stage) + nextStopsHtml(p);
   if (ui.stage === 'plate') {
     const c = r.results.find((x) => x.charger.id === ui.pending);
     return `${journey}<h2>Visitor details</h2>
@@ -986,7 +993,7 @@ function stageHtml(ctx, r) {
     const pass = p.pass
       ? `<p class="approved"><b>Approved.</b> Show plate <b>${esc(formatPlate(p.pass.plate))}</b> at the guardhouse, ${esc(fmtTime(new Date(p.pass.slotStart)))} to ${esc(fmtClock(new Date(p.pass.slotEnd)))}.</p>`
       : '';
-    return `${journey}<h2>Bay held</h2>
+    return `${journey}${ui.flash ? `<p class="flash">${esc(ui.flash)}</p>` : ''}<h2>Bay held</h2>
       ${pass}
       <p class="saved">${esc(savingLine(p))}</p>
       <p><b>${esc(p.name)}</b> is held for you ${p.arriveAt ? `from your planned arrival at ${esc(fmtTime(new Date(p.arriveAt)))} for ${CONST.holdMinutes} minutes, until ${esc(fmtClock(until))}` : `for ${CONST.holdMinutes} minutes, until ${esc(fmtTime(until))}`}.</p>
@@ -1045,6 +1052,11 @@ function bind(root, ctx, ranking, car) {
     const s = lastTrip?.stops[Number(btn.dataset.bookStop)];
     if (s) bookTripStop(root, ctx, car, s);
   }));
+  // One tap holds every stop on the trip; Activity moves on to the next stop after each check-in.
+  box.querySelector('[data-book-trip]')?.addEventListener('click', () => {
+    const [first, ...rest] = lastTrip?.stops || [];
+    if (first) bookTripStop(root, ctx, car, first, rest);
+  });
   box.querySelectorAll('[data-detail]').forEach((btn) => btn.addEventListener('click', () => select(root, ctx, btn.dataset.detail, true)));
   const form = box.querySelector('#d-plate-form');
   if (form) {
@@ -1054,7 +1066,7 @@ function bind(root, ctx, ranking, car) {
   }
   const act = (name, fn) => { const b = box.querySelector(`[data-act="${name}"]`); if (b) b.addEventListener('click', fn); };
   act('back', () => { ui.stage = 'pick'; ui.pending = null; location.hash = '#plan'; });
-  act('start', () => { ui.stage = 'charging'; update(root, ctx); startTimer(); });
+  act('start', () => { ui.flash = ''; ui.stage = 'charging'; update(root, ctx); startTimer(); });
   act('cancel', async () => {
     const p = ui.pick;
     if (ctx.api && p?.bookingRef) {
@@ -1079,6 +1091,14 @@ function bind(root, ctx, ranking, car) {
     }
     ctx.state.booking = null;
     ctx.save();
+    // Trip booked as a whole: carry on to the next held stop.
+    const [next, ...rest] = ui.pick.nextStops || [];
+    if (next) {
+      bookTripStop(root, ctx, CARS.find((c) => c.id === ui.carId) || CARS[0], next, rest);
+      ui.flash = `Thanks for checking in. Next stop: ${next.charger.name}.`;
+      update(root, ctx);
+      return;
+    }
     ui.flash = ok ? 'Thanks. Your check-in raised this charger\'s reliability score.' : 'Thanks. The JMB and operator can now see this problem.';
     ui.stage = 'pick';
     ui.pick = null;
@@ -1157,7 +1177,7 @@ async function book(root, ctx, ranking, c, car, visitor) {
 
 // A long-trip charging stop: hold a highway DC bay for when the plan arrives there.
 // Highway sites are demo data, so the hold is kept on this device rather than on the shared server.
-function bookTripStop(root, ctx, car, s) {
+function bookTripStop(root, ctx, car, s, nextStops = []) {
   const slotMinutes = Math.max(60, Math.ceil((CONST.holdMinutes + s.minutes) / 30) * 30);
   addSession(ctx.state, { at: ctx.clock.getTime(), anonId: `Driver #${anonNumber(ctx.state)}`, role: 'trip', chargerId: s.charger.id, kWh: s.kWh, costRm: s.cost });
   ui.flash = '';
@@ -1165,7 +1185,7 @@ function bookTripStop(root, ctx, car, s) {
     chargerId: s.charger.id, name: s.charger.name, price: s.price, kWhTarget: s.kWh, power: Math.min(s.charger.kw, car.dcKw),
     batteryKwh: car.batteryKwh, startPct: Math.round(s.arrivePct), bookedAt: ctx.clock.getTime(),
     session: { kWh: 0, minutes: 0 }, pass: null, bookingRef: null, slotEnd: s.at + slotMinutes * 60000,
-    walk: null, saving: 0, minutesVsNearest: 0, arriveAt: s.at, stopMinutes: s.minutes,
+    walk: null, saving: 0, minutesVsNearest: 0, arriveAt: s.at, stopMinutes: s.minutes, nextStops,
   };
   ui.stage = 'booked';
   ctx.state.booking = { chargerId: s.charger.id, at: ctx.clock.getTime() };

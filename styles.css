@@ -1298,3 +1298,9 @@ main:has(> .loading) { min-height: 100vh; min-height: 100dvh; }
   .charging-workspace .recommendation-sheet, .panel-tab, .results .pick { transition: none; }
   .charging-workspace .recommendation-sheet { transform: none; }
 }
+/* Activity: the other stops held on a booked trip. */
+.next-stops { border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; margin-bottom: 8px; }
+.next-stops h3 { font-size: .85rem; margin: 0 0 6px; color: var(--muted); }
+.next-stops ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.next-stops li { display: grid; gap: 2px; }
+.next-stops .muted { font-size: .8rem; }
