@@ -1,5 +1,16 @@
 // "Ask CasSama": turn a plain-English request into trip settings. Rule-based, so it runs offline
 // and every answer can be explained. Unknown words are ignored; nothing is guessed.
+// Both Home and Plan expose an “Ask CasSama” input. When AI is configured,
+// questions from either tab must reach the conversational agent, not this
+// offline preference parser (which cannot answer policy or revenue questions).
+export function askRoute(tab, aiEnabled) {
+  return aiEnabled && (tab === 'home' || tab === 'plan') ? 'chat' : 'preferences';
+}
+
+export function looksLikeQuestion(text) {
+  return /\?|\b(?:how|what|when|where|why|can|could|should|would|does|do|is|are|will)\b/i.test(String(text || ''));
+}
+
 const OPERATORS = ['Gentari', 'ChargEV', 'JomCharge', 'Tesla'];
 const PLACE_WORDS = { klem: ['kl east mall', 'kl east', 'klem'], melawati: ['melawati'], wangsa: ['wangsa'], klcc: ['klcc'], here: ['near me', 'nearby', 'around here'] };
 const CAR_WORDS = { emas7: ['e.mas 7', 'emas 7', 'e.mas7', 'emas7'], emas5: ['e.mas 5', 'emas 5', 'e.mas5', 'emas5'], atto3: ['atto 3', 'atto3', 'atto'], modely: ['model y', 'tesla model'] };

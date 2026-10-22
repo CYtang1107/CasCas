@@ -51,21 +51,21 @@ function writeCache(storage, cache) {
 }
 
 export async function loadChargers({
-  fetchFn = globalThis.fetch, storage = browserStorage(), now = Date.now(), key = OCM.key,
+  fetchFn = globalThis.fetch, storage = browserStorage(), now = Date.now(), key = OCM.key, condoSites = CONDO_SITES,
 } = {}) {
   if (key && fetchFn) {
     const live = await fetchLive(fetchFn, key);
     if (live) {
       writeCache(storage, { savedAt: now, chargers: live });
-      return { chargers: [...CONDO_SITES, ...live], source: 'live', ageDays: 0 };
+      return { chargers: [...condoSites, ...live], source: 'live', ageDays: 0 };
     }
   }
   const cache = readCache(storage);
   if (cache) {
     const age = (now - cache.savedAt) / DAY_MS;
     if (age >= 0 && age < OCM.cacheMaxAgeDays) {
-      return { chargers: [...CONDO_SITES, ...cache.chargers], source: 'saved', ageDays: Math.floor(age) };
+      return { chargers: [...condoSites, ...cache.chargers], source: 'saved', ageDays: Math.floor(age) };
     }
   }
-  return { chargers: [...CONDO_SITES, ...DEMO_CHARGERS], source: 'demo', ageDays: 0 };
+  return { chargers: [...condoSites, ...DEMO_CHARGERS], source: 'demo', ageDays: 0 };
 }

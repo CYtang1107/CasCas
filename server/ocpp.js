@@ -6,6 +6,8 @@ import crypto from 'node:crypto';
 import { WebSocketServer } from 'ws';
 import { parseFrame, call, callResult, callError, parsePointId, siteLimitKw, shareLoad, chargingProfile, meterReading, liveSummary, BAY_KW } from '../engine/ocpp.js';
 import { cleanEntry } from '../engine/maintenance.js';
+import { priceAt } from '../engine/pricing.js';
+import { settleMeteredCharge } from '../engine/charging.js';
 
 const MAX_MAINTENANCE = 500;
 const CALL_TIMEOUT_MS = 10000;
@@ -22,7 +24,17 @@ function passwordOk(header, id, password) {
 export function createCsms({ store, condos, password, now = () => Date.now() }) {
   const points = new Map(); // id -> live state
   const pending = new Map(); // our CALL id -> resolve
-  let txSeq = 1;
+  // Sequence is persisted in the store so reconnects/restarts cannot reuse
+  // OCPP transaction ids from previously settled charging sessions.
+  const hashTag = (tag) => crypto.createHash('sha256').update(tag).digest('hex');
+  const activeTag = (p, idTag) => store.data.chargingSessions.find(s =>
+    s.tagHash === hashTag(idTag) && s.condoId === p.condoId && s.bay === p.bay &&
+    s.status === 'awaiting_charge' && s.bookingStart <= now() && s.bookingEnd > now()
+  );
+  // Demo OCPP simulator uses CASSAMA, not issued reservation tags. Those transactions
+  // remain unlinked and are deliberately excluded from the financial ledger.
+  const bookedTag = (tag) => typeof tag === 'string' && /^CS[a-f0-9]{16}$/.test(tag);
+
 
   const log = (p, kind, note) => {
     const list = store.data.maintenance[p.condoId] || [];
@@ -52,7 +64,9 @@ export function createCsms({ store, condos, password, now = () => Date.now() }) 
   const handlers = {
     BootNotification: (p, m) => { p.model = String(m.chargePointModel || '').slice(0, 40); return { status: 'Accepted', currentTime: new Date(now()).toISOString(), interval: 60 }; },
     Heartbeat: () => ({ currentTime: new Date(now()).toISOString() }),
-    Authorize: () => ({ idTagInfo: { status: 'Accepted' } }),
+    Authorize: (p, m) => ({ idTagInfo: {
+      status: bookedTag(m.idTag) && (!activeTag(p, m.idTag) || p.status === 'Faulted') ? 'Invalid' : 'Accepted',
+    } }),
     StatusNotification: (p, m) => {
       if (m.connectorId === 0) return {};
       const prev = p.status;
@@ -65,13 +79,57 @@ export function createCsms({ store, condos, password, now = () => Date.now() }) 
       return {};
     },
     StartTransaction: (p, m) => {
-      p.txId = txSeq++;
-      p.energyWh = Number(m.meterStart) || 0;
+      const tag = String(m.idTag || '');
+      const matched = bookedTag(tag) ? activeTag(p, tag) : null;
+      const meterStart = m.meterStart;
+      if (p.txId !== null || p.status === 'Faulted' ||
+          (bookedTag(tag) && !matched) ||
+          (matched && (!Number.isFinite(meterStart) || meterStart < 0))) {
+        return { transactionId: -1, idTagInfo: { status: 'Invalid' } };
+      }
+      if (!Number.isSafeInteger(store.data.nextOcppTransactionId) ||
+          store.data.nextOcppTransactionId >= Number.MAX_SAFE_INTEGER)
+        return { transactionId: -1, idTagInfo: { status: 'Invalid' } };
+      p.txId = store.data.nextOcppTransactionId++;
+      // Persist allocation before acknowledging StartTransaction, including
+      // non-booked simulator activity. Prevents id reuse after a restart.
+      store.save();
+      p.energyWh = Number.isFinite(meterStart) && meterStart >= 0 ? meterStart : 0;
       p.sessionStartWh = p.energyWh;
+      p.linkedSessionId = matched?.id || null;
+      if (matched) {
+        const condo = condos.find(c => c.id === p.condoId);
+        const configured = { ...condo, sharing: { ...condo.sharing, ...(store.data.sharing[condo.id] || {}) } };
+        matched.status = 'charging';
+        matched.startedAt = now();
+        matched.meterStartWh = p.energyWh;
+        matched.transactionId = p.txId;
+        matched.priceRmPerKwh = priceAt({ siteType: 'condo' }, new Date(now()), configured, matched.role === 'resident');
+        store.save();
+      }
       return { transactionId: p.txId, idTagInfo: { status: 'Accepted' } };
     },
-    StopTransaction: (p) => { p.txId = null; p.powerW = 0; return { idTagInfo: { status: 'Accepted' } }; },
+    StopTransaction: (p, m) => {
+      if (p.txId === null || m.transactionId !== p.txId)
+        return { idTagInfo: { status: 'Invalid' } };
+      if (p.linkedSessionId) {
+        const n = store.data.chargingSessions.findIndex(s => s.id === p.linkedSessionId);
+        if (n !== -1) {
+          // Billing requires a valid stop reading from the OCPP charger, not client input.
+          const stopWh = typeof m.meterStop === 'number' ? m.meterStop : NaN;
+          store.data.chargingSessions[n] = settleMeteredCharge(store.data.chargingSessions[n], stopWh, now());
+          store.save();
+        }
+      }
+      p.linkedSessionId = null;
+      p.txId = null;
+      p.powerW = 0;
+      p.limitKw = BAY_KW;
+      return { idTagInfo: { status: 'Accepted' } };
+    },
     MeterValues: (p, m) => {
+      // A linked session must not display readings from a different transaction.
+      if (p.linkedSessionId && m.transactionId != null && m.transactionId !== p.txId) return {};
       const r = meterReading(m);
       if (r.energyWh != null) p.energyWh = r.energyWh;
       if (r.powerW != null) p.powerW = r.powerW;
@@ -82,7 +140,7 @@ export function createCsms({ store, condos, password, now = () => Date.now() }) 
   function connect(ws, id, where) {
     const old = points.get(id);
     if (old) old.ws.terminate();
-    const p = { id, ...where, ws, status: 'Unknown', errorCode: 'NoError', powerW: 0, energyWh: 0, sessionStartWh: 0, limitKw: BAY_KW, txId: null, lastSeen: now(), model: '' };
+    const p = { id, ...where, ws, status: 'Unknown', errorCode: 'NoError', powerW: 0, energyWh: 0, sessionStartWh: 0, limitKw: BAY_KW, txId: null, linkedSessionId: null, lastSeen: now(), model: '' };
     points.set(id, p);
     ws.on('message', (data) => {
       p.lastSeen = now();
@@ -97,6 +155,16 @@ export function createCsms({ store, condos, password, now = () => Date.now() }) 
       if (done) { pending.delete(f.id); done(f); }
     });
     ws.on('close', () => {
+      // Do not auto-bill on disconnection. The session remains pending reconciliation
+      // with a valid OCPP StopTransaction/meter stop reading.
+      if (p.linkedSessionId) {
+        const session = store.data.chargingSessions.find(s => s.id === p.linkedSessionId);
+        if (session?.status === 'charging') {
+          session.status = 'needs_review';
+          session.reviewReason = 'Charger disconnected before StopTransaction';
+          store.save();
+        }
+      }
       if (points.get(id) === p) { points.delete(id); rebalance(p.condoId); }
     });
   }

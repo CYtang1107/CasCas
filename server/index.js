@@ -18,14 +18,22 @@ const app = createApp({
   dataDir: process.env.DATA_DIR || fileURLToPath(new URL('./data', import.meta.url)),
   secret: process.env.JMB_SECRET || crypto.randomBytes(32).toString('hex'),
   pins,
+  trustProxy: process.env.TRUST_PROXY === '1' ? 1 : false,
   ocmKey: process.env.OCM_KEY || '',
   ocppPassword,
   trafficKey: process.env.TOMTOM_KEY || '',
+  // Explicit opt-in for a controlled prototype demonstration. NEVER use with real charger deployments.
+  demoOcpp: process.env.DEMO_OCPP_CONTROLS === '1',
   // Same OpenAI-compatible key as VO-AI (DashScope / Qwen). Without one, Ask CasSama uses its rule-based parser.
   ai: {
     key: process.env.AI_API_KEY || process.env.DASHSCOPE_API_KEY || '',
     baseUrl: process.env.AI_BASE_URL || undefined,
     models: process.env.AI_MODELS ? process.env.AI_MODELS.split(',').map((m) => m.trim()).filter(Boolean) : undefined,
+    // Per-model HTTP deadline. Defaults to 25s in the agent; raise for slower Gemini calls.
+    timeoutMs: (() => {
+      const ms = Number(process.env.AI_TIMEOUT_MS);
+      return Number.isFinite(ms) && ms >= 1000 ? Math.min(ms, 120000) : undefined;
+    })(),
   },
 });
 
@@ -33,8 +41,10 @@ const port = Number(process.env.PORT) || 4300;
 const server = app.listen(port, () => {
   console.log(`CasSama shared server on http://localhost:${port} · OCPP 1.6-J at ws://localhost:${port}/ocpp/<condo>-<bay>`);
   if (process.env.OCPP_SIM !== '0') {
-    app.locals.sim = startSimulator({ url: `ws://127.0.0.1:${port}`, password: ocppPassword, condos: CONDOS });
-    console.log('Simulated OCPP chargers started (OCPP_SIM=0 turns them off)');
+    const demo = process.env.DEMO_OCPP_CONTROLS === '1';
+    app.locals.sim = startSimulator({ url: `ws://127.0.0.1:${port}`, password: ocppPassword, condos: CONDOS,
+      ...(demo ? { pStart: 0, pStop: 0, tickMs: 1000 } : {}) });
+    console.log(`Simulated OCPP chargers started (OCPP_SIM=0 turns them off)${demo ? ' · DEMO controls enabled, auto traffic off' : ''}`);
   }
 });
 app.locals.attachOcpp(server);

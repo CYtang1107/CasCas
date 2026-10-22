@@ -20,12 +20,14 @@ import { CONDOS } from '../data/condos.js';
 import { osrmUrl, parseOsrm, stepText, typicalTraffic, refineTrip } from '../engine/roads.js';
 import { parseTtRoute, parseIncidents, incidentsNear } from '../engine/tomtom.js';
 import { bestWindow } from '../engine/schedule.js';
-import { parseRequest } from '../engine/assistant.js';
+import { confirmDemoStart, adoptOcppStatus, showDemoOcppMeter } from '../engine/demo-meter.js';
+import { parseRequest, askRoute, looksLikeQuestion } from '../engine/assistant.js';
 import { planTrip } from '../engine/trip.js';
 import { TRIP_PLACES, HIGHWAY_CHARGERS } from '../data/trips.js';
 import { normalisePlate, isValidPlate, formatPlate, canAutoApprove, createPass } from '../engine/access.js';
 import { addSession, anonNumber } from '../state.js';
 import { esc, rm, rm0, fmtTime, fmtClock } from './format.js';
+import { scopedFlashHtml } from './flash.js';
 import { aiAvailable, aiOn, chat, chatHtml, sendChat, chatAction } from './chat.js';
 import { notify, notifyState, askPermission } from './notify.js';
 
@@ -144,11 +146,12 @@ function originPoint() {
 const placeOf = (id) => (id === 'custom' && ui.customTo
   ? { ...ui.customTo, trip: isTrip(originPoint(), ui.customTo) }
   : ALL_PLACES.find((p) => p.id === id) || PLACES[0]);
-const fresh = () => ({ carId: 'emas7', battery: 35, placeId: 'klem', homeId: '', parkFor: '30m', stage: 'pick', pick: null, flash: '', pending: null, plate: '', selected: null, prefs: noPrefs(), ask: '', askNote: '', arriveMin: 20, filters: emptyFilters(), from: null, customTo: null, locMsg: '' });
+const fresh = () => ({ carId: 'emas7', battery: 35, placeId: 'klem', homeId: '', parkFor: '30m', stage: 'pick', pick: null, flash: '', flashTarget: 'activity', pending: null, plate: '', selected: null, prefs: noPrefs(), ask: '', askNote: '', arriveMin: 20, filters: emptyFilters(), from: null, customTo: null, locMsg: '', residentKey: '' });
 let ui = fresh();
 let map = null;
 let layer = null;
 let timer = null;
+let chargingPoll = null; // OCPP status polling, never starts the demo charging clock
 let markers = new Map();
 let last = null; // latest { ranking, car }, for the detail panel
 let tab = 'home';
@@ -157,6 +160,7 @@ let profileApplied = false;
 
 export function resetDriver() {
   stopTimer();
+  stopChargingPoll();
   ui = fresh();
   profileApplied = false;
 }
@@ -171,7 +175,7 @@ export function renderDriver(root, ctx, which = 'home') {
   const { condos } = ctx.world;
   const askForm = (big) => `<form id="d-ask" class="ask ${big ? 'big' : ''}" role="search" novalidate>
         <label class="search"><span class="sr-only">Ask CasSama</span>${IC.search}
-          <input id="d-ask-text" type="search" maxlength="200" autocomplete="off" enterkeyhint="go" placeholder="${big && aiOn() ? 'Ask CasSama anything: “cheapest charge at 20%?”' : 'Ask CasSama: “Atto 3 at 71%, going to Melaka”'}" value="${esc(ui.ask)}"></label>
+          <input id="d-ask-text" type="search" maxlength="200" autocomplete="off" enterkeyhint="go" placeholder="${aiOn() ? 'Ask CasSama about charging, sharing or costs…' : 'Set trip details: “Atto 3 at 71%, going to Melaka”'}" value="${esc(ui.ask)}"></label>
         <button class="btn primary" type="submit">Go</button>
       </form>
       ${ui.askNote ? `<p class="ask-note" role="status">${esc(ui.askNote)}</p>` : ''}`;
@@ -323,7 +327,10 @@ export function renderDriver(root, ctx, which = 'home') {
   checkTraffic(ctx);
   update(root, ctx);
   if (which === 'map' && ui.selected) focusSelected();
-  if (ui.stage === 'charging' && !timer) startTimer();
+  if (ui.stage === 'charging') {
+    if (ui.pick?.serverCharging) startChargingPoll();
+    else if (!timer) startTimer();
+  }
   if (which === 'plan') autoLocate(root, ctx);
 }
 
@@ -339,9 +346,9 @@ function summaryLine() {
 
 // Home: the one best charger for the current settings (or the trip), condo bays nearby, your month.
 function homeHtml(r, ctx, trip, place) {
-  const flash = ui.flash ? `<p class="flash">${esc(ui.flash)}</p>` : '';
+  const flash = scopedFlashHtml(ui.flash, ui.flashTarget, 'home');
   const active = ui.stage !== 'pick' && ui.pick
-    ? `<a class="banner" href="#activity">${IC.bolt}<span><b>${ui.stage === 'charging' ? 'Charging now' : 'Bay held'}</b> at ${esc(ui.pick.name)}</span><span aria-hidden="true">›</span></a>` : '';
+    ? `<a class="banner" href="#activity">${IC.bolt}<span><b>${ui.stage === 'charging' ? (ui.pick.serverCharging && ui.pick.chargeStatus !== 'charging' ? 'Awaiting charger' : 'Charging now') : 'Bay held'}</b> at ${esc(ui.pick.name)}</span><span aria-hidden="true">›</span></a>` : '';
   const head = `<div class="sec-head"><h3>${trip ? `Your trip to ${esc(place.name)}` : 'Best for you now'}</h3><a href="#plan">Change</a></div>
     <p class="muted">${esc(summaryLine())}</p>`;
   let main;
@@ -360,8 +367,8 @@ function homeHtml(r, ctx, trip, place) {
   }
   const myCondo = ctx.world.condos.find((c) => c.id === ui.homeId);
   const v = myCondo ? proposalFor(ctx, myCondo) : null;
-  if (v?.proposal?.status === 'open' && !v.myVote) notify(ctx.state.profile, `vote-${myCondo.id}-${v.proposal.id || v.proposal.openedAt || ''}`, `CasSama: vote at ${myCondo.name}`, `${describeSharing(v.proposal.settings).split('.')[0]}. Vote in the app within 7 days.`);
-  const voteBanner = v?.proposal?.status === 'open' && !v.myVote
+  if (v?.proposal?.status === 'open' && !v.proposal.legacyUnverified && !v.myVote) notify(ctx.state.profile, `vote-${myCondo.id}-${v.proposal.id || v.proposal.openedAt || ''}`, `CasSama: vote at ${myCondo.name}`, `${describeSharing(v.proposal.settings).split('.')[0]}. Vote in the app within 7 days.`);
+  const voteBanner = v?.proposal?.status === 'open' && !v.proposal.legacyUnverified && !v.myVote
     ? `<a class="banner vote" href="#account">${IC.help}<span><b>Vote on bay sharing</b> at ${esc(myCondo.name)}: ${esc(describeSharing(v.proposal.settings).split('.')[0])}</span><span aria-hidden="true">›</span></a>` : '';
   return active + voteBanner + flash + `<section class="home-pick">${head}${main}</section>`
     + placeRow(ctx, 'While you shop', (c) => c.siteType === 'mall')
@@ -553,16 +560,17 @@ function bindAccount(root, ctx) {
 // Activity: the booking or charge in progress, otherwise your history.
 function activityHtml(ctx, r) {
   if (ui.stage !== 'pick') return stageHtml(ctx, r);
-  const flash = ui.flash ? `<p class="flash">${esc(ui.flash)}</p>` : '';
+  const flash = scopedFlashHtml(ui.flash, ui.flashTarget, 'activity');
   const name = (id) => [...ctx.world.chargers, ...HIGHWAY_CHARGERS].find((c) => c.id === id)?.name || id;
-  const list = [...ctx.state.sessions].sort((a, b) => b.at - a.at).slice(0, 10);
+  const list = ctx.state.sessions.filter((s) => s.status === 'demo_completed' || s.status === 'completed')
+    .sort((a, b) => b.at - a.at).slice(0, 10);
   const source = document.getElementById('data-source')?.textContent || '';
   const mode = document.getElementById('data-mode')?.textContent || '';
   return `${flash}<h2>Activity</h2>
     <div class="empty-state">${IC.bolt}<p><b>No booking right now.</b> Book a bay from Home or Plan and it appears here: the hold, the QR code and the live charge.</p>
       <div class="btn-row"><a class="btn primary" href="#home">Find a charger</a><a class="btn" href="#plan">Plan a trip</a></div></div>
     ${monthHtml(ctx)}
-    <section class="history"><h3>Recent sessions</h3>
+    <section class="history"><h3>Completed demo charging sessions</h3>
       ${list.length ? `<ul class="hist">${list.map((x) => `<li><div><b>${esc(name(x.chargerId))}</b><span class="muted">${esc(fmtTime(new Date(x.at)))} · ${x.kWh.toFixed(1)} kWh</span></div><b class="price">${rm(x.costRm)}</b></li>`).join('')}</ul>`
         : '<p class="muted">No sessions on this device yet.</p>'}
     </section>
@@ -616,7 +624,14 @@ function hasPrefs() {
 
 // Apply what Ask CasSama understood, then redraw the page so every field shows it.
 function ask(root, ctx, text) {
-  if (tab === 'home' && aiOn()) { askAi(root, ctx, text); return; }
+  if (askRoute(tab, aiOn()) === 'chat') {
+    ui.askNote = '';
+    // Plan also has an Ask input, but only Home renders the conversation.
+    // Navigate there before sending so the user can see the agent answer.
+    if (tab === 'plan') location.hash = '#home';
+    askAi(root, ctx, text);
+    return;
+  }
   ui.ask = text;
   const { set, understood } = parseRequest(text, { cars: CARS, places: ALL_PLACES });
   if (set.arriveMin != null) ui.arriveMin = set.arriveMin;
@@ -627,9 +642,11 @@ function ask(root, ctx, text) {
   if ('maxPrice' in set) ui.prefs.maxPrice = set.maxPrice;
   if ('fastOnly' in set) ui.prefs.fastOnly = set.fastOnly;
   if ('operator' in set) ui.prefs.operator = set.operator;
-  ui.askNote = understood.length
-    ? `Understood: ${understood.join(' · ')}.`
-    : 'Sorry, I could not find a battery level, place, stay or preference in that. Try "40%, going to KLCC for 2 hours".';
+  ui.askNote = looksLikeQuestion(text)
+    ? `Conversational AI is not enabled on this server. ${understood.length ? `I only applied these trip settings: ${understood.join(' · ')}. ` : ''}For scheduling advice, booking policies or revenue questions, enable the AI API key. You can still set battery, destination and parking time here.`
+    : understood.length
+      ? `Understood: ${understood.join(' · ')}.`
+      : 'This field sets trip preferences only while AI is off. Try "40%, going to KLCC for 2 hours".';
   if (ui.stage === 'plate') ui.stage = 'pick';
   if (location.hash !== '#plan') location.hash = '#plan';
   else renderDriver(root, ctx, 'plan');
@@ -667,7 +684,15 @@ function bindChat(root) {
     location.hash = '#plan';
   }));
 }
-aiAvailable().then((on) => { if (on && tab === 'home' && current) renderDriver(current.root, current.ctx, 'home'); });
+aiAvailable().then((on) => {
+  if (!on || !current) return;
+  if (tab === 'home') renderDriver(current.root, current.ctx, 'home');
+  else if (tab === 'plan') {
+    // Update the prompt without destroying the trip form or resetting its focus.
+    const input = current.root.querySelector('#d-ask-text');
+    if (input) input.placeholder = 'Ask CasSama about charging, sharing or costs…';
+  }
+});
 
 // ---- From / To: type a place, pick a suggestion, or use your location ----
 let suggestTimer = null;
@@ -882,7 +907,7 @@ function monthHtml(ctx) {
   const m = monthSummary(ctx.state.sessions, ctx.clock);
   return `<section class="month" aria-label="Your month"><h3>Your ${esc(ctx.clock.toLocaleString('en-MY', { month: 'long' }))}</h3>
     <div class="mstats"><div><b>${m.sessions}</b><span>sessions</span></div><div><b>${m.kWh.toFixed(1)}</b><span>kWh charged</span></div>
-    <div><b>${rm(m.paidRm)}</b><span>paid</span></div><div><b>${Math.round(m.co2Kg)} kg</b><span>CO₂ avoided</span></div></div>
+    <div><b>${rm(m.paidRm)}</b><span>demo charging cost</span></div><div><b>${Math.round(m.co2Kg)} kg</b><span>CO₂ avoided</span></div></div>
     ${m.sessions ? '' : '<p class="muted">Book a charge and it shows up here.</p>'}</section>`;
 }
 
@@ -936,7 +961,7 @@ function smallCard(c, i) {
 }
 
 function pickHtml(r, ctx) {
-  const flash = ui.flash ? `<p class="flash">${esc(ui.flash)}</p>` : '';
+  const flash = scopedFlashHtml(ui.flash, ui.flashTarget, 'plan');
   const head = `${flash}<div class="res-head"><h2>Best picks</h2><span class="mode mode-${r.mode}">${MODES[r.mode].label}</span></div>
     <p class="muted">${modeLine(r.mode)}. Charging to ${r.target}% (${Math.round(r.kWh)} kWh) · ${esc(fmtTime(ctx.clock))}</p>`;
   if (r.kWh < 1) return `${head}<p class="empty">Your battery is at ${ui.battery}%. No charge needed for this trip.</p>`;
@@ -963,7 +988,7 @@ function pickHtml(r, ctx) {
 
 function journeyHtml(stage) {
   const active = { plate: 0, booked: 1, charging: 2, done: 3 }[stage];
-  return `<ol class="journey" aria-label="Charging stages">${['Choose', 'Bay held', 'Charging', 'Check-in'].map((label, i) => `<li ${i === active ? 'aria-current="step"' : ''} class="${i < active ? 'complete' : ''}"><span aria-hidden="true">${i + 1}</span>${label}</li>`).join('')}</ol>`;
+  return `<ol class="journey" aria-label="Charging stages">${(ui.pick?.serverCharging ? ['Choose', 'Booked', 'OCPP status', 'Complete'] : ['Choose', 'Bay held', 'Charging', 'Check-in']).map((label, i) => `<li ${i === active ? 'aria-current="step"' : ''} class="${i < active ? 'complete' : ''}"><span aria-hidden="true">${i + 1}</span>${label}</li>`).join('')}</ol>`;
 }
 
 // The other stops held on the same trip, shown under the current stop.
@@ -993,23 +1018,76 @@ function stageHtml(ctx, r) {
     const pass = p.pass
       ? `<p class="approved"><b>Approved.</b> Show plate <b>${esc(formatPlate(p.pass.plate))}</b> at the guardhouse, ${esc(fmtTime(new Date(p.pass.slotStart)))} to ${esc(fmtClock(new Date(p.pass.slotEnd)))}.</p>`
       : '';
-    return `${journey}${ui.flash ? `<p class="flash">${esc(ui.flash)}</p>` : ''}<h2>Bay held</h2>
+    if (p.serverCharging) {
+      const bays = p.availableBays || [];
+      const selector = p.availableBays
+        ? (bays.length ? `<label class="field">Available OCPP bay <select id="d-bay-select">${bays.map(b => `<option value="${b}">Bay ${b}</option>`).join('')}</select></label>
+          <button class="btn primary" type="button" data-act="confirm-checkin">Check in to selected bay</button>`
+          : '<p class="muted">No connected, available bays right now. Retry when a bay becomes free.</p>')
+        : '';
+      return `${journey}<h2>Booking confirmed</h2>${pass}
+        <p><b>${esc(p.name)}</b> · Your charging slot ends ${esc(fmtTime(new Date(p.slotEnd)))}.</p>
+        <p class="muted">Check-in is allowed during your actual reservation time. Select an available physical bay when you arrive.</p>
+        ${p.baysError ? `<p class="error" role="alert">${esc(p.baysError)}</p>` : ''}
+        ${selector}
+        <div class="btn-row"><button class="btn" type="button" data-act="load-bays" ${p.baysLoading ? 'disabled' : ''}>${p.baysLoading ? 'Checking bays…' : 'Find / refresh available bays'}</button>
+        <button class="btn" type="button" data-act="cancel">Cancel booking</button></div>`;
+    }
+    return `${journey}<h2>Bay held (demo)</h2>
       ${pass}
       <p class="saved">${esc(savingLine(p))}</p>
       <p><b>${esc(p.name)}</b> is held for you ${p.arriveAt ? `from your planned arrival at ${esc(fmtTime(new Date(p.arriveAt)))} for ${CONST.holdMinutes} minutes, until ${esc(fmtClock(until))}` : `for ${CONST.holdMinutes} minutes, until ${esc(fmtTime(until))}`}.</p>
       ${qrSvg(p.chargerId)}
-      <p class="muted">Demo QR illustration. At the bay, scan the code on the charger to start.</p>
-      <div class="btn-row"><button class="btn primary" type="button" data-act="start">Scan QR and start charging</button>
+      <p class="muted">Demo QR illustration. This offline/public-charger experience simulates charging; no charger is started.</p>
+      <div class="btn-row"><button class="btn primary" type="button" data-act="start">Start simulated charging</button>
       <button class="btn" type="button" data-act="cancel">Cancel booking</button></div>`;
   }
   if (ui.stage === 'charging') {
+    if (p.serverCharging) {
+      const s = p.chargeStatus || 'awaiting_charge';
+      const label = s === 'charging' ? 'Charging at the bay' : 'Waiting for charger';
+      const instructions = p.demoOcpp
+        ? (s === 'charging'
+          ? 'Demo OCPP transaction running. Finish the simulated session to record a meter reading and calculated receipt.'
+          : 'Your bay is checked in. Start a controlled simulated OCPP transaction to show the complete demo journey.')
+        : (s === 'charging'
+          ? 'The connected charger has confirmed the OCPP transaction. Stop charging on the charger itself; CasSama will record the final meter reading.'
+          : 'The reservation is checked in, but the charger has not started. Present the authorization tag at the assigned OCPP charger. CasSama cannot remotely start it.');
+      // Bring back the original circular meter for controlled OCPP demos.
+      // This estimate combines the driver's declared initial battery with
+      // *interim OCPP simulator readings*. It is never used for billing.
+      const demoActive = showDemoOcppMeter(p);
+      const kwh = Math.max(0, Number(p.liveEnergyKwh) || 0);
+      const pct = Math.min(100, Math.max(0, p.startPct + (kwh / p.batteryKwh) * 100));
+      const circumference = 2 * Math.PI * 102;
+      const meter = demoActive ? `<div class="ring" role="progressbar" aria-label="Estimated battery percentage during OCPP demo" aria-valuenow="${pct.toFixed(1)}" aria-valuemin="0" aria-valuemax="100">
+        <svg viewBox="0 0 220 220" aria-hidden="true"><circle class="track" cx="110" cy="110" r="102"/>
+          <circle class="value" cx="110" cy="110" r="102" stroke-dasharray="${circumference.toFixed(1)}" stroke-dashoffset="${(circumference * (1 - pct / 100)).toFixed(1)}"/></svg>
+        <div class="label"><b>${pct.toFixed(1)}%</b><span>+${kwh.toFixed(2)} kWh</span></div>
+      </div><p class="muted">DEMO battery estimate based on OCPP simulator meter readings and your starting battery level. Not a vehicle battery sensor or a payment receipt.</p>
+      <p class="muted">Simulated power: ${Number.isFinite(p.livePowerKw) ? p.livePowerKw.toFixed(1) : '—'} kW · 1 second ≈ 1 simulated minute.</p>` : '';
+      return `${journey}<div class="charge-view">
+        <div class="head"><h2>${esc(label)}</h2><span class="chip ${s === 'charging' ? 'on' : 'amber'}">${esc(s === 'charging' ? 'OCPP charging' : 'Awaiting OCPP')}</span></div>
+        <p><b>${esc(p.name)}</b> · Bay ${p.bay}</p>
+        ${meter}
+        <p>${esc(instructions)}</p>
+        ${p.demoOcpp ? `<p class="notice">DEMO SIMULATION — no physical charging or payment. A simulated OCPP StartTransaction/StopTransaction will be sent.</p>
+          ${p.idTag ? `<button class="btn primary" type="button" data-act="demo-ocpp-${s === 'charging' ? 'finish' : 'start'}" ${p.demoBusy ? 'disabled' : ''}>${p.demoBusy ? 'Working…' : s === 'charging' ? 'Complete simulated charge' : 'Start simulated charge'}</button>` : ''}`
+          : p.idTag ? `<label class="field">Charger authorization tag <code class="charge-id-tag">${esc(p.idTag)}</code></label>
+          <button class="btn" type="button" data-act="copy-tag">Copy authorization tag</button>`
+          : '<p class="muted">The one-time tag is no longer in this page. Do not share it publicly.</p>'}
+        ${p.chargeError ? `<p class="error" role="alert">${esc(p.chargeError)}</p>` : ''}
+        <p class="muted">Status comes from the booking-linked OCPP backend, not the demo timer. Revenue is calculated only after a verified StopTransaction.</p>
+        <button class="btn" type="button" data-act="refresh-charge">Refresh charging status</button>
+      </div>`;
+    }
     const s = p.session;
     const battery = Math.min(100, p.startPct + (s.kWh / p.batteryKwh) * 100);
     const C = 2 * Math.PI * 102;
     const left = Math.max(0, ((p.kWhTarget - s.kWh) / p.power) * 60);
     const fullAt = new Date(p.bookedAt + (s.minutes + left) * 60000);
     return `${journey}<div class="charge-view">
-      <div class="head"><h2>Charging</h2><span class="chip on"><span class="live-dot"></span>Live</span></div>
+      <div class="head"><h2>Simulated charging</h2><span class="chip amber">Demo mode</span></div>
       <p class="muted">${esc(p.name)}</p>
       <div class="ring" role="progressbar" aria-label="Battery" aria-valuenow="${Math.round(battery)}" aria-valuemin="0" aria-valuemax="100">
         <svg viewBox="0 0 220 220" aria-hidden="true"><circle class="track" cx="110" cy="110" r="102"/>
@@ -1028,6 +1106,17 @@ function stageHtml(ctx, r) {
     </div>`;
   }
   const s = p.session;
+  if (p.serverCharging) {
+    const completed = p.chargeStatus === 'completed';
+    return `${journey}<h2>${completed ? 'Charging session completed' : 'Charging needs review'}</h2>
+      <p class="muted">${completed ? `Bay ${p.bay} · ${Number(p.recordedEnergy || 0).toFixed(2)} kWh delivered · calculated charging receipt ${rm(p.recordedRevenue || 0)}.`
+      : `Bay ${p.bay}. ${esc(p.reviewReason || 'The charging session needs operator review. No receipt was recorded.')}`}</p>
+      <p class="muted">${completed ? (p.simulated ? 'DEMO SIMULATION — metered usage and calculated receipt came from a simulated charger, not real electricity or payment.' : 'Metered usage is not proof of payment. Please move your car before the reserved slot ends.')
+      : 'Incomplete or invalid OCPP readings are excluded from JMB recorded receipts.'}</p>
+      <label class="field">Note (optional) <input id="d-note" type="text" maxlength="120" placeholder="e.g. cable damaged on bay 3"></label>
+      <div class="btn-row"><button class="btn primary" type="button" data-act="ok">Finish</button>
+      <button class="btn" type="button" data-act="problem">Report a problem</button></div>`;
+  }
   return `${journey}<p class="notice-line"><b>Notification:</b> ${s.kWh >= p.kWhTarget - 0.01 ? 'charging complete' : 'charging stopped'}. Please move your car by ${esc(fmtClock(new Date(p.slotEnd)))} to avoid the overstay fee.</p>
     <h2>How did it go?</h2>
     <p>${s.kWh.toFixed(1)} kWh for <b>${rm(s.kWh * p.price)}</b> at ${esc(p.name)}.</p>
@@ -1042,6 +1131,46 @@ function savingLine(p) {
   if (p.saving >= 0.01) return `You saved ${rm(p.saving)} vs the nearest charger.`;
   if (p.minutesVsNearest < 0) return `${formatDuration(-p.minutesVsNearest)} faster than the nearest charger.`;
   return 'Same as the nearest charger.';
+}
+
+// Only the server can confirm a booking-linked charging transaction. The backend
+// reports energy and receipts only after StopTransaction; never infer them from a UI timer.
+function stopChargingPoll() {
+  if (chargingPoll) clearInterval(chargingPoll);
+  chargingPoll = null;
+}
+
+async function refreshChargingStatus() {
+  const p = ui.pick;
+  const ctx = current?.ctx;
+  if (!p?.serverCharging || !p.bookingRef || !ctx?.api || ui.stage !== 'charging') {
+    stopChargingPoll();
+    return;
+  }
+  const ref = p.bookingRef;
+  const response = await ctx.api.bookingChargingStatus(ref.id, ref.cancelToken);
+  if (ui.pick !== p || ui.stage !== 'charging') return;
+  if (!response.ok) {
+    p.chargeError = `Couldn't retrieve charging status: ${response.error}`;
+  } else {
+    p.chargeError = '';
+    adoptOcppStatus(p, response.data);
+    if (response.data.status === 'completed' || response.data.status === 'needs_review') {
+      p.recordedEnergy = response.data.energyKwh;
+      p.recordedRevenue = response.data.revenueRm;
+      p.reviewReason = response.data.reviewReason;
+      p.idTag = null;
+      ui.stage = 'done';
+      stopChargingPoll();
+    }
+  }
+  if (current?.root.querySelector('#d-activity')) update(current.root, current.ctx);
+}
+
+function startChargingPoll() {
+  if (chargingPoll || !ui.pick?.serverCharging || ui.stage !== 'charging') return;
+  refreshChargingStatus();
+  chargingPoll = setInterval(refreshChargingStatus, 2000);
 }
 
 function bind(root, ctx, ranking, car) {
@@ -1066,25 +1195,89 @@ function bind(root, ctx, ranking, car) {
   }
   const act = (name, fn) => { const b = box.querySelector(`[data-act="${name}"]`); if (b) b.addEventListener('click', fn); };
   act('back', () => { ui.stage = 'pick'; ui.pending = null; location.hash = '#plan'; });
-  act('start', () => { ui.flash = ''; ui.stage = 'charging'; update(root, ctx); startTimer(); });
+  act('start', () => { ui.stage = 'charging'; update(root, ctx); startTimer(); });
+  act('load-bays', async () => {
+    const p = ui.pick;
+    if (!p?.serverCharging || p.baysLoading) return;
+    p.baysLoading = true;
+    p.baysError = '';
+    update(root, ctx);
+    const result = await ctx.api.ocpp(p.condoId);
+    if (ui.pick !== p) return;
+    p.baysLoading = false;
+    if (!result.ok) { p.baysError = `Could not check bays: ${result.error}`; p.availableBays = null; }
+    else p.availableBays = (result.data.points || []).filter(x => x.status === 'Available').map(x => x.bay);
+    update(root, ctx);
+  });
+  act('confirm-checkin', async () => {
+    const p = ui.pick;
+    const bay = Number(box.querySelector('#d-bay-select')?.value);
+    if (!p?.serverCharging || !p.availableBays?.includes(bay)) return;
+    const button = box.querySelector('[data-act="confirm-checkin"]');
+    if (button) button.disabled = true;
+    const result = await ctx.api.bookingCheckIn(p.bookingRef.id, p.bookingRef.cancelToken, bay);
+    if (ui.pick !== p) return;
+    if (!result.ok) {
+      p.baysError = `Check-in failed: ${result.error}`;
+      p.availableBays = null; // refresh statuses before trying again
+    } else {
+      p.bay = result.data.bay;
+      p.idTag = result.data.idTag; // keep only in memory, never save to localStorage
+      p.chargeStatus = result.data.status;
+      ui.stage = 'charging';
+      stopTimer();
+    }
+    update(root, ctx);
+    if (ui.stage === 'charging') startChargingPoll();
+  });
+  act('refresh-charge', refreshChargingStatus);
+  for (const action of ['start', 'finish']) act(`demo-ocpp-${action}`, async () => {
+    const p = ui.pick;
+    if (!p?.serverCharging || !p.demoOcpp || !p.idTag || p.demoBusy) return;
+    p.demoBusy = true;
+    p.chargeError = '';
+    update(root, ctx);
+    const result = await ctx.api.bookingDemoOcpp(p.bookingRef.id, p.bookingRef.cancelToken, p.idTag, action);
+    if (ui.pick !== p) return;
+    p.demoBusy = false;
+    if (!result.ok) p.chargeError = `Demo charging failed: ${result.error}`;
+    else if (action === 'start') confirmDemoStart(p, result.data);
+    // Render the confirmed simulator session immediately, rather than hiding
+    // the ring until an asynchronous charging-status poll catches up.
+    if (ui.pick === p && ui.stage === 'charging') update(root, ctx);
+    await refreshChargingStatus();
+    if (ui.pick === p && ui.stage === 'charging') update(root, ctx);
+  });
+  act('copy-tag', async () => {
+    const tag = ui.pick?.idTag;
+    if (!tag) return;
+    try { await navigator.clipboard.writeText(tag); }
+    catch { ui.pick.chargeError = 'Could not copy automatically. Select and copy the tag above.'; update(root, ctx); }
+  });
   act('cancel', async () => {
     const p = ui.pick;
     if (ctx.api && p?.bookingRef) {
       const r = await ctx.api.cancel(p.bookingRef.id, p.bookingRef.cancelToken);
-      if (!r.ok) { ui.flash = `Couldn't cancel: ${r.error}`; update(root, ctx); return; }
+      if (!r.ok) { ui.flash = `Couldn't cancel: ${r.error}`; ui.flashTarget = 'activity'; update(root, ctx); return; }
     } else if (p?.pass) {
       ctx.state.visitorPasses = ctx.state.visitorPasses.filter((x) => x.id !== p.pass.id);
     }
+    stopChargingPoll();
     ui.stage = 'pick'; ui.pick = null; ctx.state.booking = null; ctx.save();
     if (ctx.api) ctx.refresh(); else update(root, ctx);
   });
-  act('stop', () => { stopTimer(); ui.stage = 'done'; update(root, ctx); });
+  act('stop', () => {
+    stopTimer();
+    recordDemoCharge(ui.pick, ctx);
+    ui.stage = 'done';
+    update(root, ctx);
+  });
   const checkin = async (ok) => {
     const note = (box.querySelector('#d-note')?.value || '').trim();
     const record = { ok, note, at: ctx.clock.getTime() };
     if (ctx.api) {
       const r = await ctx.api.checkin({ chargerId: ui.pick.chargerId, ...record });
-      if (!r.ok) { ui.flash = `Couldn't save your check-in: ${r.error}`; update(root, ctx); return; }
+      if (!r.ok) { ui.flash = `Couldn't save your check-in: ${r.error}`; ui.flashTarget = 'activity'; update(root, ctx); return; }
     } else {
       const list = ctx.state.checkins[ui.pick.chargerId] || [];
       ctx.state.checkins[ui.pick.chargerId] = [...list, record];
@@ -1100,6 +1293,8 @@ function bind(root, ctx, ranking, car) {
       return;
     }
     ui.flash = ok ? 'Thanks. Your check-in raised this charger\'s reliability score.' : 'Thanks. The JMB and operator can now see this problem.';
+    ui.flashTarget = 'activity';
+    stopChargingPoll();
     ui.stage = 'pick';
     ui.pick = null;
     if (ctx.api) ctx.refresh(); else ctx.rerender();
@@ -1112,6 +1307,7 @@ function startBooking(root, ctx, ranking, car, id) {
   const c = ranking.results.find((x) => x.charger.id === id);
   if (!c) return;
   ui.flash = '';
+  ui.flashTarget = 'activity';
   if (c.isSharedVisit) { ui.stage = 'plate'; ui.pending = c.charger.id; goActivity(root, ctx); return; }
   book(root, ctx, ranking, c, car, null);
 }
@@ -1119,7 +1315,7 @@ function startBooking(root, ctx, ranking, car, id) {
 function confirmVisitor(root, ctx, ranking, car, form) {
   const err = form.querySelector('#d-plate-err');
   const fail = (msg) => { err.textContent = msg; err.hidden = false; };
-  const back = (msg) => { ui.stage = 'pick'; ui.pending = null; ui.flash = msg; update(root, ctx); };
+  const back = (msg) => { ui.stage = 'pick'; ui.pending = null; ui.flash = msg; ui.flashTarget = 'activity'; update(root, ctx); };
   const c = ranking.results.find((x) => x.charger.id === ui.pending);
   if (!c) { back('That bay is no longer free. Pick another charger.'); return; }
   const plate = normalisePlate(ui.plate);
@@ -1132,9 +1328,28 @@ function confirmVisitor(root, ctx, ranking, car, form) {
 // Hold the bay, record the session (anonymous) and, for visitors, the plate pass.
 // Shared mode: the server saves it and approves the pass itself; nothing is confirmed until it answers.
 async function book(root, ctx, ranking, c, car, visitor) {
+
+  if (
+    ctx.api &&
+    c.condo &&
+    c.isResident &&
+    !ui.residentKey
+  ) {
+    ui.residentKey = window.prompt(
+      `Enter your JMB-issued resident access key for ${c.condo.name}:`
+    )?.trim() || '';
+  
+    if (!ui.residentKey) {
+      ui.flash = 'Resident verification is required.';
+      ui.flashTarget = tab;
+      update(root, ctx);
+      return;
+    }
+  }
+
   const power = c.charger.type === 'DC' ? Math.min(c.charger.kw, car.dcKw) : Math.min(c.charger.kw, car.acKw);
   const session = buildSession({
-    ranking, chosenId: c.charger.id, at: ctx.clock.getTime(), anonNo: anonNumber(ctx.state), resident: !!ui.homeId,
+    ranking, chosenId: c.charger.id, at: ctx.clock.getTime(), anonNo: anonNumber(ctx.state), resident: c.condo ? c.isResident : !!ui.homeId,
   });
   const start = c.arrival.getTime();
   const slotMinutes = Math.max(60, Math.ceil((CONST.holdMinutes + c.stopChargeMin) / 30) * 30);
@@ -1142,18 +1357,57 @@ async function book(root, ctx, ranking, c, car, visitor) {
   let pass = null;
   let bookingRef = null;
   if (ctx.api) {
-    const r = await ctx.api.book({ session, booking: { chargerId: c.charger.id, start, end }, pass: visitor || undefined });
+    const r = await ctx.api.book({
+      session,
+      booking: {
+        chargerId: c.charger.id,
+        start,
+        end
+      },
+      pass: visitor || undefined,
+      ...(c.condo && c.isResident
+        ? { residentKey: ui.residentKey }
+        : {})
+    });
     if (!r.ok) {
-      ui.stage = 'pick'; ui.pending = null;
-      ui.flash = r.status === 0 ? 'Couldn\'t save your booking, try again.' : r.error;
-      update(root, ctx);
+      ui.stage = 'pick';
+      ui.pending = null;
+      // Booking failures belong on Activity, not the Home/Plan recommendations.
+      ui.flashTarget = 'activity';
+    
+      if (r.status === 403) {
+        ui.residentKey = '';
+    
+        ui.flash =
+          'Resident verification failed. Your access key is invalid or expired. Please obtain a valid key from your JMB and try again.';
+    
+      } else if (r.status === 409) {
+        ui.flash = `Booking unavailable: ${r.error}`;
+    
+        const alternatives = (r.alternatives || [])
+          .slice(0, 3)
+          .map(a =>
+            `${fmtTime(new Date(a.start))}–${fmtClock(new Date(a.end))}`
+          )
+          .join(' or ');
+    
+        if (alternatives) {
+          ui.flash += ` Suggested times: ${alternatives}.`;
+        }
+    
+      } else {
+        ui.flash = r.status === 0
+          ? "Couldn't connect to the booking server. Please try again."
+          : `Booking failed: ${r.error}`;
+      }
+    
+      // Navigate to a screen that displays the error message.
+      goActivity(root, ctx);
       return;
     }
     pass = r.data.pass || null;
     bookingRef = { id: r.data.bookingId, cancelToken: r.data.cancelToken };
-    addSession(ctx.state, session);
   } else {
-    addSession(ctx.state, session);
     if (visitor) {
       pass = createPass({ id: `pass-${start}-${c.charger.id}`, condoId: c.condo.id, chargerId: c.charger.id, plate: visitor.plate, slotStart: start, minutes: slotMinutes, now: ctx.clock.getTime() });
       ctx.state.visitorPasses = [...ctx.state.visitorPasses, pass];
@@ -1163,7 +1417,11 @@ async function book(root, ctx, ranking, c, car, visitor) {
   ui.pick = {
     chargerId: c.charger.id, name: c.charger.name, price: c.price, kWhTarget: c.deliveredKwh, power,
     batteryKwh: car.batteryKwh, startPct: ui.battery, bookedAt: ctx.clock.getTime(),
-    session: { kWh: 0, minutes: 0 }, pass, bookingRef,
+    session: { kWh: 0, minutes: 0 }, pendingSession: session, pass, bookingRef,
+    // Only confirmed residential bookings can be linked to a physical OCPP bay.
+    condoId: c.condo?.id || null,
+    serverCharging: !!(ctx.api && c.condo && bookingRef),
+    chargeStatus: 'not_checked_in', availableBays: null, baysError: '', baysLoading: false,
     slotEnd: pass ? pass.slotEnd : end,
     walk: c.reasons.find((x) => x.includes('min walk to')) || null,
     saving: session.nearestCostRm - session.costRm, minutesVsNearest: session.minutesVsNearest,
@@ -1199,6 +1457,23 @@ function goActivity(root, ctx) {
   else update(root, ctx);
 }
 
+// The prototype timer is not a payment processor. Record demo energy and
+// estimated cost once charging finishes, not when the user books a slot.
+function recordDemoCharge(p, ctx) {
+  if (!p?.pendingSession || !ctx) return;
+  const kWh = Math.round(p.session.kWh * 100) / 100;
+  if (kWh > 0) {
+    addSession(ctx.state, {
+      ...p.pendingSession,
+      kWh,
+      costRm: Math.round(kWh * p.price * 100) / 100,
+      status: 'demo_completed',
+    });
+    ctx.save();
+  }
+  p.pendingSession = null;
+}
+
 function startTimer() {
   stopTimer();
   timer = setInterval(() => {
@@ -1210,7 +1485,9 @@ function startTimer() {
     const nowSim = p.bookedAt + p.session.minutes * 60000;
     if (p.slotEnd && p.slotEnd - nowSim <= 15 * 60000) notify(profile, `slot-${p.bookedAt}`, 'CasSama: 15 minutes left', `Your charging slot ends at ${fmtClock(new Date(p.slotEnd))}. After that it is ${rm(CONST.overstayRmPer10Min)} per 10 min.`);
     if (p.session.kWh >= p.kWhTarget) {
-      stopTimer(); ui.stage = 'done';
+      stopTimer();
+      if (current?.ctx) recordDemoCharge(p, current.ctx);
+      ui.stage = 'done';
       notify(profile, `done-${p.bookedAt}`, 'CasSama: charging complete', `${p.session.kWh.toFixed(1)} kWh added. Please move your car by ${fmtClock(new Date(p.slotEnd))}.`);
     }
     if (current?.root.querySelector('#d-activity')) update(current.root, current.ctx);

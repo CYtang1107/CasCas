@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseRequest } from '../engine/assistant.js';
+import { parseRequest, askRoute, looksLikeQuestion } from '../engine/assistant.js';
 import { CARS } from '../data/cars.js';
 import { PLACES } from '../data/places.js';
 
@@ -41,4 +41,25 @@ test('"no budget", "any operator" and "any speed" clear those preferences', () =
   assert.equal(r.set.maxPrice, null);
   assert.equal(r.set.operator, null);
   assert.equal(r.set.fastOnly, false);
+});
+
+// Regression: the Plan search box must not send genuine questions to the
+// trip-only parser when the live AI agent is available.
+test('Home and Plan both route Ask CasSama to AI when enabled', () => {
+  for (const tab of ['home', 'plan']) {
+    assert.equal(askRoute(tab, true), 'chat');
+    assert.equal(askRoute(tab, false), 'preferences');
+  }
+  assert.equal(askRoute('map', true), 'preferences');
+});
+
+test('scheduling, booking, revenue and cost prompts are questions, not just preferences', () => {
+  const prompts = [
+    'I need to charge for two hours. When should I charge to save money?',
+    'Can I book a residential charger at Lumina tonight?',
+    'How much revenue has Lumina generated for its JMB this month?',
+    'How much will it cost to fully charge my car?',
+  ];
+  for (const prompt of prompts) assert.equal(looksLikeQuestion(prompt), true, prompt);
+  assert.equal(looksLikeQuestion('Atto 3 71% going to Melaka'), false);
 });

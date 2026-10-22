@@ -5,11 +5,13 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
 import { CONDOS } from '../data/condos.js';
+import { condoSitesFor } from '../data/chargers.js';
 import { loadChargers } from '../data/ocm.js';
 import { normalisePlate, isValidPlate, canAutoApprove, createPass } from '../engine/access.js';
 import { validateSharing } from '../engine/sharing.js';
 import { followRate, savings, overstayTotals } from '../engine/insights.js';
-import { validateEntry, cleanEntry, faultBays } from '../engine/maintenance.js';
+import { validateEntry, cleanEntry, faultBays, bayStatus } from '../engine/maintenance.js';
+import { chargingRevenueReport, malaysiaMonth } from '../engine/charging.js';
 import { createStore } from './store.js';
 import { createCsms } from './ocpp.js';
 import { createTomTom, parsePoints, parseBbox } from './tomtom.js';
@@ -19,6 +21,7 @@ import { createAgent } from './agent.js';
 import { CARS } from '../data/cars.js';
 import { START } from '../data/places.js';
 import { cleanSession, cleanBooking, cleanCheckin, cleanSharing } from './validate.js';
+import { checkCondoBooking, findAlternativeSlots } from '../engine/reservations.js';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const FILES = ['index.html', 'jmb.html', 'app.js', 'config.js', 'state.js', 'styles.css', 'design/logo.png'];
@@ -29,7 +32,7 @@ const MAX_CHECKINS = 200;
 const noCache = (res) => res.setHeader('Cache-Control', 'no-cache');
 
 // Open Charge Map through the server: the key stays here. Live results are kept 24 h, fallbacks 10 min.
-function chargerSource({ dataDir, fetchFn, key, now }) {
+function chargerSource({ dataDir, fetchFn, key, now, condoSites }) {
   const file = path.join(dataDir, 'ocm.json');
   const storage = {
     getItem: () => { try { return fs.readFileSync(file, 'utf8'); } catch { return null; } },
@@ -41,26 +44,59 @@ function chargerSource({ dataDir, fetchFn, key, now }) {
     const t = now();
     const ttl = last?.source === 'live' ? 24 * 3600e3 : 10 * 60e3;
     if (last && t - at < ttl) return last;
-    last = await loadChargers({ fetchFn, storage, now: t, key });
+    last = await loadChargers({ fetchFn, storage, now: t, key, condoSites });
     at = t;
     return last;
   };
 }
 
-export function createApp({ dataDir, secret, pins, ocmKey = '', ocppPassword = crypto.randomBytes(16).toString('hex'), trafficKey = '', ai = null, fetchFn = globalThis.fetch, now = () => Date.now() }) {
+export function createApp({ dataDir, secret, pins, ocmKey = '', ocppPassword = crypto.randomBytes(16).toString('hex'), trafficKey = '', ai = null, demoOcpp = false, fetchFn = globalThis.fetch, now = () => Date.now(), condos = CONDOS, trustProxy = false }) {
   const store = createStore(dataDir);
-  const csms = createCsms({ store, condos: CONDOS, password: ocppPassword, now });
+  // The OCPP transaction context is held in the charger connection. After a
+  // server restart, an interrupted session must be reviewed, not auto-billed.
+  let interrupted = false;
+  for (const session of store.data.chargingSessions) {
+    if (session.status === 'charging') {
+      session.status = 'needs_review';
+      session.reviewReason = 'Server restarted before verified StopTransaction';
+      interrupted = true;
+    }
+  }
+  if (interrupted) store.save();
+  const csms = createCsms({ store, condos, password: ocppPassword, now });
   const auth = createAuth({ secret, pins, now });
-  const chargers = chargerSource({ dataDir, fetchFn, key: ocmKey, now });
+  const keyHash = (key) =>
+    crypto.createHash('sha256')
+      .update(key)
+      .digest('hex');
+
+  const residentCredential = (key, condoId) => {
+    if (typeof key !== 'string' || !/^[A-Za-z0-9_-]{32}$/.test(key)) return null;
+    const entry = store.data.residentKeys[keyHash(key)];
+    return entry?.condoId === condoId && entry.expiresAt > now() && entry.revokedAt == null
+      ? entry : null;
+  };
+  const isResidentKey = (key, condoId) => !!residentCredential(key, condoId);
+  // This identifier is entered and independently verified by JMB at issuance.
+  // Store only an HMAC, not an apartment/unit address in the JSON database.
+  const normalizeUnit = (value) => {
+    if (typeof value !== 'string') return null;
+    const unit = value.trim().toUpperCase().replace(/\s+/g, '');
+    return /^[A-Z0-9][A-Z0-9\/-]{0,39}$/.test(unit) ? unit : null;
+  };
+  const unitHash = (condoId, unit) => crypto.createHmac('sha256', secret)
+    .update(`casSama:unit-v1:${condoId}:${unit}`).digest('hex');
+  const chargers = chargerSource({ dataDir, fetchFn, key: ocmKey, now, condoSites: condoSitesFor(condos) });
   const app = express();
   app.disable('x-powered-by');
-  app.set('trust proxy', 1); // Render sits in front: rate limits need the real client address
+  // Never trust user-supplied X-Forwarded-For by default. Opt in only behind a known proxy.
+  app.set('trust proxy', trustProxy);
   // OCPP chargers connect over WebSocket: call app.locals.attachOcpp(httpServer) after listen().
   app.locals.attachOcpp = (server) => csms.attach(server);
   app.locals.sim = null;
 
   const condoWithSharing = (id) => {
-    const c = CONDOS.find((x) => x.id === id);
+    const c = condos.find((x) => x.id === id);
     return c ? { ...c, sharing: { ...c.sharing, ...(store.data.sharing[id] || {}) } } : null;
   };
   const bad = (res, error, status = 400) => res.status(status).json({ error });
@@ -72,9 +108,11 @@ export function createApp({ dataDir, secret, pins, ocmKey = '', ocppPassword = c
   for (const d of DIRS) app.use(`/${d}`, express.static(path.join(ROOT, d), { setHeaders: noCache, index: false }));
 
   app.use('/api', express.json({ limit: '50kb' }));
+  // JMB responses may contain plates, resident-key metadata or bearer tokens.
+  app.use('/api/jmb', (_req, res, next) => { res.set('Cache-Control', 'no-store'); next(); });
 
   app.get('/api/health', (req, res) => res.json({ ok: true }));
-  app.get('/api/config', (req, res) => res.json({ traffic: !!trafficKey, ai: !!ai?.key }));
+  app.get('/api/config', (req, res) => res.json({ traffic: !!trafficKey, ai: !!ai?.key, ...(demoOcpp && app.locals.sim ? { demoOcpp: true } : {}) }));
 
   // The CasSama assistant: an orchestrator model calling CasSama's own engines as tools.
   const agent = ai?.key ? createAgent({ ...ai, fetchFn, now }) : null;
@@ -89,11 +127,18 @@ export function createApp({ dataDir, secret, pins, ocmKey = '', ocppPassword = c
     const origin = lat > 0.5 && lat < 7.5 && lng > 99 && lng < 120 ? { lat, lng, name: String(c.originName || 'your location').slice(0, 60) } : { ...START, name: 'KL East' };
     const t = new Date(c.clock);
     const clock = Number.isNaN(t.getTime()) ? new Date(now()) : t;
-    const home = CONDOS.find((x) => x.id === c.homeId) || null;
+    const home = condos.find((x) => x.id === c.homeId) || null;
     const history = Array.isArray(b.history) ? b.history.slice(-6) : [];
     try {
-      const world = { chargers: (await chargers()).chargers, condos: CONDOS.map((x) => condoWithSharing(x.id)) };
-      const env = { world, car, origin, clock, homeId: home?.id || null, parkFor: c.parkFor, prefs: c.prefs || {} };
+      const world = { chargers: (await chargers()).chargers, condos: condos.map((x) => condoWithSharing(x.id)) };
+      const env = {
+        world, car, origin, clock, homeId: home?.id || null, parkFor: c.parkFor, prefs: c.prefs || {},
+        // Booking suggestions use the same confirmed reservations and fault records as the API.
+        // This is preliminary only; actual bookings are always validated again on submit.
+        bookings: store.data.bookings,
+        faultsByCondo: Object.fromEntries(condos.map((site) =>
+          [site.id, faultBays(store.data.maintenance[site.id] || [], site.bays)])),
+      };
       res.json(await agent.ask({ text, history, env, context: { clock, carName: car.name, originName: origin.name, homeName: home?.name } }));
     } catch (e) {
       console.warn('AI assistant failed:', e.message); // provider status and message, never the key
@@ -152,18 +197,109 @@ export function createApp({ dataDir, secret, pins, ocmKey = '', ocppPassword = c
     const activeBays = {};
     for (const b of store.data.bookings) if (b.start <= at && at < b.end) activeBays[b.chargerId] = (activeBays[b.chargerId] || 0) + 1;
     const out = {};
-    for (const c of CONDOS) {
+    for (const c of condos) {
       const n = faultBays(store.data.maintenance[c.id] || [], c.bays);
       if (n) out[`cs-${c.id}`] = n;
     }
     res.json({ sharing: store.data.sharing, checkins: store.data.checkins, activeBays, faultBays: out, live: csms.summaries() });
   });
 
+  app.post(
+    '/api/jmb/:condoId/resident-keys',
+    requireJmb,
+    (req, res) => {
+      const condo = condoWithSharing(req.params.condoId);
+  
+      if (!condo) {
+        return bad(res, 'Unknown condo', 404);
+      }
+  
+      const rawUnit = req.body?.unitId;
+      const unit = rawUnit === undefined || rawUnit === null || rawUnit === ''
+        ? null : normalizeUnit(rawUnit);
+      if (rawUnit !== undefined && rawUnit !== null && rawUnit !== '' && !unit)
+        return bad(res, 'Invalid unit reference (use letters, numbers, / or -; up to 40 characters)');
+      // Legacy/booking-only keys without unitId remain valid for charging, but
+      // cannot be used to vote. JMB must verify unit ownership before issuing.
+      const residentKey =
+        crypto.randomBytes(24).toString('base64url');
+  
+      const expiresAt = now() + 30 * 864e5;
+  
+      store.data.residentKeys[keyHash(residentKey)] = {
+        condoId: condo.id,
+        issuedAt: now(),
+        expiresAt,
+        revokedAt: null,
+        ...(unit ? { unitHash: unitHash(condo.id, unit) } : {})
+      };
+  
+      store.save();
+  
+      res.status(201).json({
+        residentKey,
+        keyId: keyHash(residentKey).slice(0, 16),
+        votingEligible: !!unit,
+        expiresAt
+      });
+    }
+  );
+
+  // JMB can review and revoke pilot resident credentials without retaining plaintext keys.
+  // An ID is the first 16 hex digits of a hash of a 192-bit random key; it is
+  // not an authorization credential and is visible only to this condo's JMB.
+  app.get('/api/jmb/:condoId/resident-keys', requireJmb, (req, res) => {
+    if (!condoWithSharing(req.params.condoId)) return bad(res, 'Unknown condo', 404);
+    const keys = Object.entries(store.data.residentKeys)
+      .filter(([, entry]) => entry?.condoId === req.params.condoId)
+      .map(([hash, entry]) => ({
+        keyId: hash.slice(0, 16), issuedAt: entry.issuedAt ?? null,
+        expiresAt: entry.expiresAt, revokedAt: entry.revokedAt ?? null,
+        active: entry.revokedAt == null && entry.expiresAt > now(),
+        votingEligible: typeof entry.unitHash === 'string',
+      }));
+    res.set('Cache-Control', 'no-store').json({ keys });
+  });
+
+  app.delete('/api/jmb/:condoId/resident-keys/:keyId', requireJmb, (req, res) => {
+    if (!condoWithSharing(req.params.condoId)) return bad(res, 'Unknown condo', 404);
+    const keyId = req.params.keyId;
+    if (!/^[a-f0-9]{16}$/.test(keyId)) return bad(res, 'Invalid key ID');
+    const found = Object.entries(store.data.residentKeys).find(([hash, entry]) =>
+      hash.startsWith(keyId) && entry?.condoId === req.params.condoId);
+    if (!found) return bad(res, 'Resident key not found', 404);
+    found[1].revokedAt ??= now();
+    store.save();
+    res.set('Cache-Control', 'no-store').json({ ok: true });
+  });
+
   app.post('/api/bookings', (req, res) => {
     const session = cleanSession(req.body?.session);
     if (!session) return bad(res, 'Invalid session');
+
     const booking = cleanBooking(req.body?.booking, session.chargerId);
     if (!booking) return bad(res, 'Invalid booking');
+
+    const condo = condos.find(
+      c => session.chargerId === `cs-${c.id}`
+    );
+    
+    if (session.chargerId.startsWith('cs-') && !condo) {
+      return bad(res, 'Unknown residential charging site', 404);
+    }
+    
+    if (condo && session.condoId !== condo.id) {
+      return bad(res, 'Condo does not match charger');
+    }
+    
+    if (condo && session.role === 'visitor' && !req.body.pass) {
+      return bad(res, 'Visitor pass details are required');
+    }
+    
+    if (req.body.pass && (!condo || session.role !== 'visitor')) {
+      return bad(res, 'Visitor passes are only for condo visitors');
+    }
+
     const id = crypto.randomUUID();
     const cancelToken = crypto.randomBytes(16).toString('hex');
     let pass = null;
@@ -180,11 +316,187 @@ export function createApp({ dataDir, secret, pins, ocmKey = '', ocppPassword = c
       };
     }
     const d = store.data;
-    d.sessions = [...d.sessions, session].slice(-MAX_SESSIONS);
-    d.bookings.push({ id, ...booking, cancelToken, createdAt: now() });
+
+    if (condo) {
+      const configured = condoWithSharing(condo.id);
+    
+      const availabilityArgs = {
+        condo: configured,
+        booking,
+        role: session.role,
+        existing: d.bookings,
+        faults: faultBays(
+          d.maintenance[condo.id] || [],
+          condo.bays
+        )
+      };
+
+      if (
+        condo &&
+        session.role === 'resident' &&
+        !isResidentKey(req.body?.residentKey, condo.id)
+      ) {
+        return bad(
+          res,
+          'A JMB-issued resident access key is required for this condo',
+          403
+        );
+      }
+    
+      const result = checkCondoBooking(availabilityArgs);
+    
+      if (!result.ok) {
+        const alternatives = findAlternativeSlots(
+          availabilityArgs
+        );
+    
+        return res.status(409).json({
+          error: result.error,
+          alternatives
+        });
+      }
+    }
+
+    // This is an estimated booking, not a metered/paid charging transaction.
+    d.sessions = [...d.sessions, { ...session, bookingId: id, status: 'booked' }].slice(-MAX_SESSIONS);
+    d.bookings.push({
+      id,
+      ...booking,
+      role: session.role,
+      condoId: condo?.id || null,
+      cancelToken,
+      createdAt: now()
+    });
     if (pass) d.passes.push(pass);
     store.save();
     res.status(201).json({ bookingId: id, cancelToken, pass });
+  });
+
+  // Booking -> physical bay check-in -> OCPP transaction. The cancel token is a
+  // pilot bearer credential: never include it in the public world/JMB summary.
+  const ownedBooking = (req, res) => {
+    const booking = store.data.bookings.find(b => b.id === req.params.id);
+    if (!booking) { bad(res, 'Booking not found', 404); return null; }
+    const given = Buffer.from(String(req.body?.cancelToken || ''));
+    const real = Buffer.from(booking.cancelToken);
+    if (given.length !== real.length || !crypto.timingSafeEqual(given, real)) {
+      bad(res, 'Not your booking', 403);
+      return null;
+    }
+    return booking;
+  };
+
+  app.post('/api/bookings/:id/check-in', (req, res) => {
+    const booking = ownedBooking(req, res);
+    if (!booking) return;
+    const condo = condoWithSharing(booking.condoId);
+    if (!condo) return bad(res, 'Check-in requires a residential charger', 409);
+    const at = now();
+    if (at < booking.start || at >= booking.end) return bad(res, 'Check-in is only allowed during the booked interval', 409);
+    const bay = req.body?.bay;
+    if (!Number.isInteger(bay) || bay < 1 || bay > condo.bays) return bad(res, 'Choose a valid bay');
+    if (bayStatus(store.data.maintenance[condo.id] || [], condo.bays)[bay - 1]?.status === 'fault')
+      return bad(res, 'This bay is out of service', 409);
+    const point = csms.points.get(`${condo.id}-${bay}`);
+    if (!point || point.status !== 'Available' || point.txId !== null)
+      return bad(res, 'This charger is not currently available', 409);
+    if (store.data.chargingSessions.some(s => s.bookingId === booking.id))
+      return bad(res, 'This booking has already been checked in', 409);
+    if (store.data.chargingSessions.some(s => s.condoId === condo.id && s.bay === bay &&
+      (s.status === 'charging' || (s.status === 'awaiting_charge' && s.bookingEnd > at))))
+      return bad(res, 'This bay is assigned to another charging session', 409);
+    // OCPP idTag has a 20-character limit. Bind it to one booking and one bay.
+    const idTag = `CS${crypto.randomBytes(8).toString('hex')}`;
+    const record = {
+      id: crypto.randomUUID(), bookingId: booking.id, condoId: condo.id, chargerId: booking.chargerId,
+      role: booking.role, bay, status: 'awaiting_charge', bookingStart: booking.start,
+      bookingEnd: booking.end, checkedInAt: at, tagHash: crypto.createHash('sha256').update(idTag).digest('hex'),
+    };
+    store.data.chargingSessions.push(record);
+    store.save();
+    // The frontend may show this tag to the resident or compatible charger.
+    // The code does NOT remotely start a charger; charging must be initiated at the device.
+    return res.status(201).json({ sessionId: record.id, bay, status: record.status, idTag });
+  });
+
+  app.post('/api/bookings/:id/charging-status', (req, res) => {
+    const booking = ownedBooking(req, res);
+    if (!booking) return;
+    const s = store.data.chargingSessions.find(x => x.bookingId === booking.id);
+    if (!s) return res.json({ status: 'not_checked_in' });
+    const { id, bay, status, checkedInAt, startedAt, endedAt, energyKwh, revenueRm, reviewReason, simulated } = s;
+    // Interim energy is informational only and exclusively backed by OCPP
+    // MeterValues for this reservation and transaction. It never enters JMB
+    // revenue until the StopTransaction reading passes reconciliation.
+    const point = csms.points.get(`${s.condoId}-${s.bay}`);
+    const linked = status === 'charging' && point?.linkedSessionId === s.id &&
+      point.txId === s.transactionId && Number.isFinite(s.meterStartWh) &&
+      Number.isFinite(point.energyWh);
+    const deltaWh = linked ? point.energyWh - s.meterStartWh : null;
+    const liveEnergyKwh = deltaWh !== null && deltaWh >= 0 && deltaWh <= 200_000
+      ? Math.round(deltaWh) / 1000 : null;
+    return res.json({ id, bay, status, checkedInAt, startedAt, endedAt, energyKwh, revenueRm, reviewReason,
+      ...(liveEnergyKwh !== null ? { liveEnergyKwh, livePowerKw: Math.max(0, point.powerW / 1000) } : {}),
+      simulated: simulated === true, demoOcpp: !!demoOcpp && !!app.locals.sim });
+  });
+
+  // Explicitly enabled demonstration only: send REAL OCPP messages through the in-process
+  // charger simulator, rather than marking a booking paid/completed via a browser timer.
+  app.post('/api/bookings/:id/demo-ocpp', async (req, res) => {
+    if (!demoOcpp || !app.locals.sim) return bad(res, 'Demo OCPP controls are disabled', 403);
+    const booking = ownedBooking(req, res);
+    if (!booking) return;
+    const session = store.data.chargingSessions.find(s => s.bookingId === booking.id);
+    if (!session) return bad(res, 'Check in before starting the demo', 409);
+    const action = req.body?.action;
+    if (action !== 'start' && action !== 'finish') return bad(res, 'Invalid demo action');
+    // Both operations require the same one-time tag issued at check-in. Never log the tag.
+    const tag = req.body?.idTag;
+    if (typeof tag !== 'string' || !/^CS[a-f0-9]{16}$/.test(tag) ||
+        crypto.createHash('sha256').update(tag).digest('hex') !== session.tagHash)
+      return bad(res, 'Invalid charger authorization tag', 403);
+    const point = csms.points.get(`${session.condoId}-${session.bay}`);
+    if (!point || !app.locals.sim.ownsConnection(session.condoId, session.bay, point.ws))
+      return bad(res, 'This bay is not connected to the CasSama demo simulator', 409);
+    if (action === 'start') {
+      if (session.status !== 'awaiting_charge' || now() < session.bookingStart || now() >= session.bookingEnd)
+        return bad(res, 'Demo start requires an active, checked-in booking', 409);
+    } else if (session.status !== 'charging' || session.simulated !== true) {
+      return bad(res, 'No simulated booking session is charging', 409);
+    }
+    try {
+      // Respect site power and the reserved time window; all quantities are
+      // an illustrative demo sample, never actual kWh supplied to a vehicle.
+      const hours = (session.bookingEnd - session.bookingStart) / 3600000;
+      const kwh = Math.round(Math.min(5, Math.max(0.1, Math.min(7, point.limitKw) * hours * 0.85)) * 1000) / 1000;
+      if (action === 'start') {
+        await app.locals.sim.startBooking(session.condoId, session.bay, tag, kwh);
+        if (session.status !== 'charging') return bad(res, 'OCPP did not confirm charging', 409);
+        session.simulated = true;
+        store.save();
+        return res.json({ status: session.status, simulated: true });
+      }
+      await app.locals.sim.finishBooking(session.condoId, session.bay, kwh);
+      // StopTransaction replaces the stored session with its settled copy.
+      const settled = store.data.chargingSessions.find(s => s.id === session.id);
+      if (settled?.status !== 'completed') return bad(res, 'OCPP completion requires reconciliation', 409);
+      return res.json({ status: settled.status, simulated: true, energyKwh: settled.energyKwh,
+        revenueRm: settled.revenueRm });
+    } catch (error) {
+      return bad(res, error.message || 'Simulator could not finish the transaction', 409);
+    }
+  });
+
+  app.get('/api/jmb/:condoId/charging-revenue', requireJmb, (req, res) => {
+    const condo = condoWithSharing(req.params.condoId);
+    if (!condo) return bad(res, 'Unknown condo', 404);
+    const month = typeof req.query.month === 'string' ? req.query.month : malaysiaMonth(now());
+    const report = chargingRevenueReport({
+      sessions: store.data.chargingSessions, condo,
+      maintenance: store.data.maintenance[condo.id] || [], month,
+    });
+    if (!report) return bad(res, 'Month must be YYYY-MM');
+    return res.json(report);
   });
 
   app.delete('/api/bookings/:id', (req, res) => {
@@ -194,7 +506,12 @@ export function createApp({ dataDir, secret, pins, ocmKey = '', ocppPassword = c
     const given = Buffer.from(String(req.body?.cancelToken || ''));
     const real = Buffer.from(b.cancelToken);
     if (given.length !== real.length || !crypto.timingSafeEqual(given, real)) return bad(res, 'Not your booking', 403);
+    const charging = d.chargingSessions.find((s) => s.bookingId === b.id);
+    if (charging?.status === 'charging' || charging?.status === 'completed' || charging?.status === 'needs_review')
+      return bad(res, 'Cannot cancel a booking after charging has started', 409);
+    d.chargingSessions = d.chargingSessions.filter((s) => s.bookingId !== b.id);
     d.bookings = d.bookings.filter((x) => x !== b);
+    d.sessions = d.sessions.filter((s) => s.bookingId !== b.id);
     d.passes = d.passes.filter((p) => p.bookingId !== b.id);
     store.save();
     res.json({ ok: true });
@@ -216,7 +533,7 @@ export function createApp({ dataDir, secret, pins, ocmKey = '', ocppPassword = c
   });
 
   app.post('/api/jmb/login', (req, res) => {
-    const r = auth.login(String(req.body?.condoId || ''), String(req.body?.pin || ''));
+    const r = auth.login(String(req.body?.condoId || ''), String(req.body?.pin || ''), req.ip);
     if (r.status === 429) return bad(res, 'Too many tries. Wait 10 minutes.', 429);
     if (r.status !== 200) return bad(res, 'Wrong PIN.', 401);
     res.json({ token: r.token, expiresAt: r.expiresAt });
@@ -254,14 +571,21 @@ export function createApp({ dataDir, secret, pins, ocmKey = '', ocppPassword = c
     res.json({ sharing: next });
   });
 
-  // ---- Residents vote on sharing changes ----
+  // ---- Resident-governed sharing changes ----
+  // Old client-selected voter IDs are no longer accepted. A verified residential
+  // unit is the voting identity; multiple keys for one unit can change one vote,
+  // but cannot increase quorum. A credential does not reveal its unit publicly.
+  const VERIFIED_VOTING = 'verified-unit-v1';
   const publicProposal = (condo) => {
     const p = store.data.proposals[condo.id];
     if (!p) return { proposal: null };
     const { votes, ...rest } = p;
-    return { proposal: rest, tally: tally(p, condo.units) };
+    const legacy = p.votingScheme !== VERIFIED_VOTING;
+    return {
+      proposal: { ...rest, ...(legacy ? { legacyUnverified: true } : {}) },
+      tally: tally(legacy ? { ...p, votes: {} } : p, condo.units),
+    };
   };
-  const voterKey = (id) => crypto.createHash('sha256').update(`cascas-vote:${id}`).digest('hex').slice(0, 24);
 
   app.get('/api/condos/:condoId/proposal', (req, res) => {
     const condo = condoWithSharing(req.params.condoId);
@@ -273,9 +597,12 @@ export function createApp({ dataDir, secret, pins, ocmKey = '', ocppPassword = c
     const condo = condoWithSharing(req.params.condoId);
     const p = condo && store.data.proposals[condo.id];
     if (!p) return bad(res, 'No vote is open for this condo', 404);
-    const voter = String(req.body?.voterId || '');
-    if (!/^[A-Za-z0-9-]{8,64}$/.test(voter)) return bad(res, 'Invalid voter');
-    const r = castVote(p, voterKey(voter), req.body?.vote, now());
+    if (p.votingScheme !== VERIFIED_VOTING)
+      return bad(res, 'This proposal used unverified voting; ask JMB to create a new one', 409);
+    const credential = residentCredential(req.body?.residentKey, condo.id);
+    if (!credential) return bad(res, 'Valid resident access key required to vote', 403);
+    if (!credential.unitHash) return bad(res, 'JMB must issue a unit-verified key before voting', 403);
+    const r = castVote(p, credential.unitHash, req.body?.vote, now());
     if (r.error) return bad(res, r.error, r.error.includes('closed') ? 409 : 400);
     store.data.proposals[condo.id] = r.proposal;
     store.save();
@@ -287,7 +614,7 @@ export function createApp({ dataDir, secret, pins, ocmKey = '', ocppPassword = c
     const next = cleanSharing(req.body?.settings);
     const err = next ? validateSharing(next, condo.bays) : 'Invalid settings';
     if (err) return bad(res, err);
-    store.data.proposals[condo.id] = createProposal({ id: crypto.randomUUID(), condoId: condo.id, settings: next, now: now() });
+    store.data.proposals[condo.id] = { ...createProposal({ id: crypto.randomUUID(), condoId: condo.id, settings: next, now: now() }), votingScheme: VERIFIED_VOTING };
     store.save();
     res.status(201).json(publicProposal(condo));
   });
@@ -296,6 +623,8 @@ export function createApp({ dataDir, secret, pins, ocmKey = '', ocppPassword = c
     const condo = condoWithSharing(req.params.condoId);
     const p = store.data.proposals[condo.id];
     if (!p || p.status !== 'open') return bad(res, 'No open vote', 409);
+    if (p.votingScheme !== VERIFIED_VOTING)
+      return bad(res, 'Legacy unverified proposal cannot change sharing; create a new proposal', 409);
     const closed = closeProposal(p, condo.units, now());
     store.data.proposals[condo.id] = closed;
     if (closed.status === 'passed') store.data.sharing[condo.id] = closed.settings;
@@ -303,14 +632,15 @@ export function createApp({ dataDir, secret, pins, ocmKey = '', ocppPassword = c
     res.json(publicProposal(condoWithSharing(condo.id)));
   });
 
-  // Demo only: fill in votes from simulated residents, labelled as such in the proposal.
+  // Demo only: display a synthetic preview without contributing any votes to a
+  // live proposal or affecting sharing on close. Never count simulated votes.
   app.post('/api/jmb/:condoId/proposal/sample', requireJmb, (req, res) => {
     const condo = condoWithSharing(req.params.condoId);
     let p = store.data.proposals[condo.id];
     if (!p || p.status !== 'open') return bad(res, 'No open vote', 409);
     const n = Math.min(condo.units, Math.max(1, Math.round(condo.units * 0.18)));
-    for (let i = 0; i < n; i++) p = castVote(p, `sample-${i}`, i % 10 < 7 ? 'yes' : 'no', now()).proposal;
-    p = { ...p, sampleVotes: n };
+    const yes = Math.floor(n * 0.7);
+    p = { ...p, sampleVotes: n, demoPreview: { yes, no: n - yes, label: 'SAMPLE ONLY — not included in the official tally' } };
     store.data.proposals[condo.id] = p;
     store.save();
     res.json(publicProposal(condo));

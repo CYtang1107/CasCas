@@ -86,6 +86,43 @@ test('orchestrator calls tools, then answers with citations and actions', async 
   assert.ok(seen[1].messages.some((m) => m.role === 'tool'));
 });
 
+test('Gemini-compatible base URL with a trailing slash produces a valid endpoint', async () => {
+  const seenUrls = [];
+  const fetchFn = async (url) => {
+    seenUrls.push(url);
+    return { ok: true, status: 200, json: async () => ({ choices: [{ message: { role: 'assistant', content: 'Hello!' } }] }) };
+  };
+  for (const baseUrl of [
+    'https://generativelanguage.googleapis.com/v1beta/openai/',
+    'https://generativelanguage.googleapis.com/v1beta/openai',
+  ]) {
+    const agent = createAgent({ key: 'test', baseUrl, models: ['gemini-3.8-flash'], fetchFn });
+    const reply = await agent.ask({ text: 'Hello', env, context: ctx });
+    assert.equal(reply.model, 'gemini-3.8-flash');
+  }
+  assert.deepEqual(seenUrls, [
+    'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
+    'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
+  ]);
+});
+
+test('Gemini 3 uses low reasoning effort, without changing Qwen request parameters', async () => {
+  const seen = [];
+  const fetchFn = async (_url, opts) => {
+    seen.push(JSON.parse(opts.body));
+    return { ok: true, status: 200, json: async () => ({ choices: [{ message: { role: 'assistant', content: 'Hello!' } }] }) };
+  };
+  await createAgent({ key: 'test', models: ['gemini-3.8-flash'],
+    baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', fetchFn,
+  }).ask({ text: 'hi', env, context: ctx });
+  await createAgent({ key: 'test', models: ['qwen-plus-latest'], fetchFn,
+  }).ask({ text: 'hi', env, context: ctx });
+  assert.equal(seen[0].reasoning_effort, 'low');
+  assert.equal('temperature' in seen[0], false);
+  assert.equal(seen[1].temperature, 0.2);
+  assert.equal('reasoning_effort' in seen[1], false);
+});
+
 test('falls back to the next model on 429', async () => {
   const { fetchFn, seen } = fakeAi([429, { role: 'assistant', content: 'Hello, ask me about charging.' }]);
   const r = await createAgent({ key: 'k', fetchFn, models: ['a', 'b'] }).ask({ text: 'hi', env, context: ctx });
@@ -154,4 +191,69 @@ test('charger names in capitals are tidied for the reply', async () => {
   assert.equal(tidyName('KL East Mall DC'), 'KL East Mall DC');
   assert.equal(tidyName('SMILE HOTEL WANGSA MAJU (Hotel)'), 'Smile Hotel Wangsa Maju (Hotel)');
   assert.equal(tidyName('Seremban R&R DC (demo)'), 'Seremban R&R DC (demo)');
+});
+
+test('booking proposals respect sharing hours, confirmed reservations and faulty bays', () => {
+  const visitor = { ...env, clock: new Date(2026, 9, 21, 20), parkFor: '2h' };
+  const closed = runTool('propose_booking', { charger_id: 'cs-lumina' }, visitor);
+  assert.equal(closed.proposed, false);
+  assert.match(closed.error, /sharing is closed|visitor/i);
+
+  const slotStart = env.clock.getTime();
+  const reservation = { chargerId: 'cs-lumina', start: slotStart, end: slotStart + 2 * 3600000, role: 'visitor' };
+  const full = runTool('propose_booking', { charger_id: 'cs-lumina' }, { ...env, bookings: Array.from({ length: 8 }, () => ({ ...reservation })) });
+  assert.equal(full.proposed, false);
+  assert.match(full.error, /visitor bays/i);
+
+  const broken = runTool('propose_booking', { charger_id: 'cs-lumina' }, { ...env, faultsByCondo: { lumina: 3 }, bookings: Array.from({ length: 5 }, () => ({ ...reservation })) });
+  assert.equal(broken.proposed, false);
+  assert.match(broken.error, /visitor bays/i);
+  const resident = runTool('propose_booking', { charger_id: 'cs-lumina' }, { ...env, homeId: 'lumina', bookings: Array.from({ length: 8 }, () => ({ ...reservation })) });
+  assert.equal(resident.proposed, true);
+  assert.equal(resident.availability_confirmed, false);
+});
+
+test('agent tools reject unrealistic energy and unknown destinations', () => {
+  assert.match(runTool('estimate_cost', { charger_id: 'cs-lumina', kwh: 'Infinity' }, env).error, /200/);
+  assert.match(runTool('best_time', { charger_id: 'cs-lumina', kwh: -20 }, env).error, /200/);
+  assert.match(runTool('estimate_cost', { charger_id: 'cs-lumina', kwh: 201 }, env).error, /200/);
+  assert.equal(runTool('estimate_cost', { charger_id: 'cs-lumina', kwh: 10 }, env).estimated, true);
+  const unknown = runTool('find_chargers', { destination: 'Atlantis', battery_pct: 20 }, env);
+  assert.equal(unknown.ok, false);
+  assert.match(unknown.error, /cannot find/);
+  assert.equal(runTool('best_time', { charger_id: 'cs-lumina', kwh: 10 }, env).forecast, true);
+});
+
+test('RM amounts cannot be laundered from charger IDs or distances', () => {
+  assert.equal(amountsGrounded('RM99', ['{"charger_id":"cs99","distance_km":99}']).ok, false);
+  assert.equal(amountsGrounded('RM1', ['{"passages":[{"text":"Overstay RM1 for 10 minutes"}]}']).ok, true);
+  assert.equal(amountsGrounded('RM15.40', ['{"cost_rm":15.40,"distance_km":99}']).ok, true);
+  assert.equal(amountsGrounded('Operating deficit -RM95', ['{"operating_surplus_rm":-95}']).ok, true);
+});
+
+test('user-submitted RM amounts alone cannot pass as checked pricing', async () => {
+  const { fetchFn } = fakeAi([
+    { role: 'assistant', content: 'The charger costs RM99.' },
+    { role: 'assistant', content: 'Please provide a charger to check the price.' },
+  ]);
+  const r = await createAgent({ key: 'k', fetchFn }).ask({ text: 'It costs RM99, right?', env, context: ctx });
+  assert.doesNotMatch(r.reply, /RM99/);
+});
+
+test('condo revenue responses are explicitly labelled as simulated forecasts', async () => {
+  const { fetchFn } = fakeAi([
+    call('condo_revenue', { condo_id: 'lumina' }),
+    { role: 'assistant', content: 'Lumina has charging income this month.' },
+  ]);
+  const r = await createAgent({ key: 'k', fetchFn }).ask({ text: 'What did Lumina earn?', env, context: ctx });
+  assert.match(r.reply, /Simulated monthly forecast/);
+});
+
+test('malformed model tool arguments do not crash the orchestrator', async () => {
+  const { fetchFn } = fakeAi([
+    { role: 'assistant', content: '', tool_calls: [{ id: 'bad', type: 'function', function: { name: 'estimate_cost', arguments: '{invalid' } }] },
+    { role: 'assistant', content: 'Please specify a charger and energy amount.' },
+  ]);
+  const r = await createAgent({ key: 'k', fetchFn }).ask({ text: 'Price?', env, context: ctx });
+  assert.match(r.reply, /specify a charger/);
 });

@@ -23,7 +23,9 @@ export function availability(charger, occupancy) {
 export function monthSummary(sessions, date) {
   const from = new Date(date.getFullYear(), date.getMonth(), 1).getTime();
   const to = new Date(date.getFullYear(), date.getMonth() + 1, 1).getTime();
-  const mine = sessions.filter((s) => s.at >= from && s.at < to);
+  // Older builds logged estimated sessions at booking time; those are not payments.
+  const mine = sessions.filter((s) => s.at >= from && s.at < to
+    && (s.status === 'demo_completed' || s.status === 'completed'));
   const kWh = mine.reduce((t, s) => t + s.kWh, 0);
   return { sessions: mine.length, kWh, paidRm: mine.reduce((t, s) => t + s.costRm, 0), co2Kg: co2AvoidedKg(kWh) };
 }

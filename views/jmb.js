@@ -12,6 +12,8 @@ import { recoveryHtml, quietHtml, maintenanceHtml, bindMaintenance, reportCsv, d
 import { bayStatus, maintenanceCost } from '../engine/maintenance.js';
 import { filterSessions } from '../engine/insights.js';
 import { renderCpo } from './cpo.js';
+import { installJmbTabs } from './jmb-tabs.js';
+import { recordedRevenueHtml, bindRecordedRevenue } from './jmb-recorded.js';
 
 let condoId = null;
 const PEAK_HOURS = Array.from({ length: TNB.peakEndHour - TNB.peakStartHour }, (_, i) => TNB.peakStartHour + i);
@@ -26,6 +28,7 @@ export function renderJmb(root, ctx) {
   const charger = chargers.find((ch) => ch.condoId === condo.id);
   const start = new Date(ctx.clock.getFullYear(), ctx.clock.getMonth(), 1);
   const priv = privateSection(condo, charger, ctx);
+  const token = ctx.api ? getToken(condo.id) : null;
   const entries = priv.maintenance;
   const monthEnd = new Date(start.getFullYear(), start.getMonth() + 1, 1).getTime();
   const maintenanceRm = entries ? maintenanceCost(entries, start.getTime(), monthEnd) : 0;
@@ -64,7 +67,7 @@ export function renderJmb(root, ctx) {
   const problems = checkins.filter((c) => !c.ok);
 
   const bays = entries ? bayStatus(entries, condo.bays) : null;
-  const SECTIONS = [['j-s-overview', 'Overview'], ['j-s-sharing', 'Sharing'], ['j-s-money', 'Cost recovery'], ['j-s-live', 'Live chargers'], ['j-s-health', 'Charger health'], ['j-s-private', 'Visitors & drivers']];
+  const SECTIONS = [['j-s-overview', 'Forecast'], ['j-s-recorded', 'Recorded revenue'], ['j-s-sharing', 'Sharing'], ['j-s-money', 'Cost recovery'], ['j-s-live', 'Live chargers'], ['j-s-health', 'Charger health'], ['j-s-private', 'Visitors & drivers']];
   root.innerHTML = `
   <div class="portal">
   <nav class="side" aria-label="Dashboard sections">${SECTIONS.map(([id, l]) => `<button type="button" data-jump="${id}">${l}</button>`).join('')}</nav>
@@ -76,12 +79,14 @@ export function renderJmb(root, ctx) {
     </div>
 
     <div class="kpis" id="j-s-overview">
-      <div class="kpi"><span>Charging income this month</span><b>${rm0(sim.revenue)}</b></div>
-      <div class="kpi"><span>JMB share after all costs</span><b>${rm0(sim.jmbIncome)}</b></div>
-      <div class="kpi hero"><span>Saving per unit per month</span><b>${rm(sim.perUnitSaving)}</b></div>
-      <div class="kpi"><span>Energy delivered</span><b>${num(sim.kWhSold)} kWh</b></div>
+      <div class="kpi"><span>Forecast charging receipts</span><b>${rm0(sim.revenue)}</b></div>
+      <div class="kpi"><span>Forecast JMB allocation</span><b>${rm0(sim.jmbIncome)}</b></div>
+      <div class="kpi hero"><span>Illustrative per-unit relief</span><b>${rm(sim.perUnitSaving)}</b></div>
+      <div class="kpi"><span>Forecast energy delivered</span><b>${num(sim.kWhSold)} kWh</b></div>
     </div>
 
+    <p class="muted">Forecast / simulated performance based on scenario assumptions; not measured receipts or guaranteed maintenance-fee savings.</p>
+    ${recordedRevenueHtml(ctx.api, condo.id)}
     <div class="grid2">
       <section class="card"><h3>An average day: who charges when</h3>
         ${barChart24({ a: sim.residentByHour, b: sim.visitorByHour, shade: PEAK_HOURS, aLabel: 'Residents', bLabel: 'Outside drivers (shared bays)' })}
@@ -103,7 +108,7 @@ export function renderJmb(root, ctx) {
         <p>Or add it to the sinking fund: <b>+${rm0(sim.jmbIncome * 12)} a year</b>, ${pct(boost)} on top of owners' contributions of ${rm0(sinkingYear)}.</p>
         <div class="bar" role="img" aria-label="Sinking fund boost ${pct(boost)}"><span style="width:${Math.min(100, boost * 100)}%"></span></div>
         <p class="muted">Hardware payback on ${condo.bays} bays at ${rm0(CONST.hardwarePerBay)} each: ${sim.paybackMonths ? `${sim.paybackMonths} months` : 'not reached at these prices'}. CO₂ avoided: ${num(sim.co2AvoidedKg)} kg this month.</p>
-        <button id="j-report" class="btn small" type="button">Download monthly report (CSV)</button>
+        <button id="j-report" class="btn small" type="button">Download forecast scenario (CSV)</button>
       </section>
       <section class="card" id="j-s-sharing"><h3>Sharing with outside drivers</h3>
         <p class="inforce"><span class="chip ${s.enabled ? 'on' : 'off'}">${s.enabled ? 'In force' : 'Paused'}</span> ${esc(describeSharing({ ...s, enabled: true }))}</p>
@@ -112,7 +117,7 @@ export function renderJmb(root, ctx) {
         ${autoHtml}
         ${proposalHtml(condo, vote, 'jmb', priv.canEdit)}
         <p class="error vote-err" role="alert" hidden></p>
-        ${priv.canEdit && vote.proposal?.status !== 'open' ? `<details class="propose"><summary>Propose a change to residents</summary>
+        ${priv.canEdit && (vote.proposal?.status !== 'open' || vote.proposal?.legacyUnverified) ? `<details class="propose"><summary>Propose a change to residents</summary>
         <form id="j-share" class="form" novalidate>
           <label class="field">Sharing mode <select id="j-mode"><option value="auto">Auto: share whenever bays are idle</option><option value="hours">Fixed hours</option></select></label>
           <label class="field">Days <select id="j-days">
@@ -151,15 +156,53 @@ export function renderJmb(root, ctx) {
         }).join('')}</tbody>
       </table></div>
     </section>
-    <div id="j-s-private">${priv.html}</div>
+    <div id="j-s-private">
+      ${priv.html}
+
+      ${ctx.api && priv.canEdit ? `
+        <section class="card">
+          <h3>Resident Access Management</h3>
+
+          <p class="muted">
+            Issue an access key only after verifying
+            that the applicant is a resident of this condominium.
+          </p>
+
+          <label class="field">Verified unit reference (needed for voting)
+            <input id="j-resident-unit" type="text" maxlength="40" placeholder="e.g. A-12-08" autocomplete="off">
+          </label>
+          <p class="muted">Confirm the occupant and their unit from JMB records first. Without a unit reference, the key permits booking but not voting.</p>
+          <button
+            type="button"
+            class="btn primary"
+            id="j-issue-key">
+            Generate Resident Key
+          </button>
+
+          <p id="j-key-result"
+            class="muted"
+            aria-live="polite"
+            hidden></p>
+          <button
+            type="button"
+            class="btn small"
+            id="j-copy-key"
+            hidden>
+            📋 Copy Resident Key
+          </button>
+        </section>
+      ` : ''}
+    </div>
   </div>
   </div>`;
 
   const $ = (sel) => root.querySelector(sel);
   $('#j-condo').value = condo.id;
   $('#j-condo').addEventListener('change', (e) => { if (e.target.value === 'cpo') { location.hash = '#cpo'; return; } condoId = e.target.value; history.replaceState(null, '', `#${condoId}`); ctx.rerender(); });
-  root.querySelectorAll('[data-jump]').forEach((b) => b.addEventListener('click', () => document.getElementById(b.dataset.jump)?.scrollIntoView({ block: 'start' })));
-  const token = ctx.api ? getToken(condo.id) : null;
+  if (!installJmbTabs(root)) {
+    // Keep the original sidebar available if a future markup version differs.
+    root.querySelectorAll('[data-jump]').forEach((b) => b.addEventListener('click', () => document.getElementById(b.dataset.jump)?.scrollIntoView({ block: 'start' })));
+  }
   bindProposal(root, ctx, condo, token);
   root.querySelector('#j-pause')?.addEventListener('click', async () => {
     const next = { ...s, enabled: !s.enabled };
@@ -194,8 +237,63 @@ export function renderJmb(root, ctx) {
     });
   }
   priv.bind(root);
+  
+const issueBtn = $('#j-issue-key');
+const copyBtn = $('#j-copy-key');
+const output = $('#j-key-result');
+
+let generatedKey = null;
+
+// Generate resident key
+issueBtn?.addEventListener('click', async () => {
+  issueBtn.disabled = true;
+  generatedKey = null;
+  copyBtn.hidden = true;
+  copyBtn.textContent = '📋 Copy Resident Key';
+
+  try {
+    const result = await ctx.api.issueResidentKey(
+      condo.id,
+      token
+    );
+
+    output.hidden = false;
+
+    if (result.ok && result.data?.residentKey) {
+      generatedKey = result.data.residentKey;
+
+      output.textContent =
+        `Resident key (copy now): ${generatedKey}`;
+
+      copyBtn.hidden = false;
+    } else {
+      output.textContent =
+        `Could not issue key: ${result.error || 'Unknown error'}`;
+    }
+  } catch (err) {
+    output.hidden = false;
+    output.textContent = 'Could not issue resident key.';
+  } finally {
+    issueBtn.disabled = false;
+  }
+});
+
+// Copy resident key
+copyBtn?.addEventListener('click', async () => {
+  if (!generatedKey) return;
+
+  try {
+    await navigator.clipboard.writeText(generatedKey);
+
+    copyBtn.textContent = '✓ Copied!';
+  } catch (err) {
+    copyBtn.textContent = 'Copy failed';
+  }
+});
+
   bindMaintenance(root, condo, ctx, priv.addMaintenance);
   bindLive(root, condo, ctx);
+  bindRecordedRevenue(root, ctx, condo.id, token);
   $('#j-report').addEventListener('click', () => {
     const sessions = priv.sessions ? filterSessions(priv.sessions, { from: start.getTime(), to: monthEnd }).length : 'n/a (log in)';
     const month = start.toLocaleString('en-MY', { month: 'long', year: 'numeric' });

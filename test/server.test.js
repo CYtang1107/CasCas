@@ -6,6 +6,7 @@ import path from 'node:path';
 import { createApp } from '../server/app.js';
 import { DEMO_CHARGERS } from '../data/chargers-demo.js';
 import { CONDO_SITES } from '../data/chargers.js';
+import { CONDOS } from '../data/condos.js';
 
 const fixture = JSON.parse(fs.readFileSync(new URL('./fixtures/ocm-sample.json', import.meta.url), 'utf8'));
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'cascas-srv-'));
@@ -14,7 +15,7 @@ const WED20 = new Date(2026, 9, 21, 20).getTime();
 
 async function start(opts = {}) {
   const app = createApp({ dataDir: opts.dataDir || tmp(), secret: 'test', pins: { lumina: '4821', serini: '7305' },
-    ocmKey: opts.ocmKey ?? '', fetchFn: opts.fetchFn || (async () => { throw new Error('offline'); }), now: opts.now });
+    condos: opts.condos || CONDOS, ocmKey: opts.ocmKey ?? '', fetchFn: opts.fetchFn || (async () => { throw new Error('offline'); }), now: opts.now });
   const server = await new Promise((r) => { const s = app.listen(0, () => r(s)); });
   const base = `http://127.0.0.1:${server.address().port}`;
   const call = async (method, url, body, token) => {
@@ -22,7 +23,7 @@ async function start(opts = {}) {
     return { status: res.status, body: await res.json().catch(() => null), headers: res.headers };
   };
   const raw = (method, url, body) => fetch(base + url, { method, headers: { 'content-type': 'application/json' }, body });
-  return { call, raw, close: () => new Promise((r) => server.close(r)) };
+  return { call, raw, base, close: () => new Promise((r) => server.close(r)) };
 }
 
 const session = (extra = {}) => ({ at: WED11, anonId: 'V12', role: 'visitor', mode: 'balanced', chargerId: 'cs-lumina', condoId: 'lumina',
@@ -86,7 +87,9 @@ test('only the booker can cancel; cancelling removes the pass', async () => {
   assert.equal((await s.call('DELETE', `/api/bookings/${r.bookingId}`, { cancelToken: r.cancelToken })).status, 200);
   assert.equal((await s.call('DELETE', `/api/bookings/${r.bookingId}`, { cancelToken: r.cancelToken })).status, 404);
   const login = (await s.call('POST', '/api/jmb/login', { condoId: 'lumina', pin: '4821' })).body;
-  assert.deepEqual((await s.call('GET', '/api/jmb/lumina', null, login.token)).body.passes, []);
+  const afterCancel = (await s.call('GET', '/api/jmb/lumina', null, login.token)).body;
+  assert.deepEqual(afterCancel.passes, []);
+  assert.equal(afterCancel.sessions.length, 0, 'cancelled booking estimate must not remain in the session log');
   await s.close();
 });
 
@@ -226,27 +229,487 @@ test('TomTom data through the server: validated, cached, key kept on the server'
   await new Promise((r) => server.close(r));
 });
 
-test('residents vote on a sharing change; it applies only if it passes', async () => {
+test('a verified unit may vote once and change its vote; forged device IDs cannot vote', async () => {
+  const pilot = { ...CONDOS.find(c => c.id === 'lumina'), units: 10 };
+  const s = await start({ condos: [pilot] });
+  try {
+    const settings = { enabled: true, mode: 'auto', days: 'all', start: 9, end: 17, reservedBays: 2, visitorPrice: 1.2 };
+    const login = await s.call('POST', '/api/jmb/login', { condoId: 'lumina', pin: '4821' });
+    const token = login.body.token;
+    assert.equal((await s.call('POST', '/api/jmb/lumina/proposal', { settings }, token)).status, 201);
+
+    assert.equal((await s.call('POST', '/api/condos/lumina/proposal/vote', { voterId: 'fake-device-100', vote: 'yes' })).status, 403);
+    const legacyKey = await s.call('POST', '/api/jmb/lumina/resident-keys', {}, token);
+    assert.equal(legacyKey.status, 201, 'booking-only keys still work');
+    assert.equal(legacyKey.body.votingEligible, false);
+    assert.equal((await s.call('POST', '/api/condos/lumina/proposal/vote', { residentKey: legacyKey.body.residentKey, vote: 'yes' })).status, 403);
+    assert.equal((await s.call('POST', '/api/jmb/lumina/resident-keys', { unitId: 'no@unit' }, token)).status, 400);
+
+    // JMB independently verifies the household/unit before issuing a voting key.
+    const first = await s.call('POST', '/api/jmb/lumina/resident-keys', { unitId: 'A-12-08' }, token);
+    const duplicate = await s.call('POST', '/api/jmb/lumina/resident-keys', { unitId: ' a-12-08 ' }, token);
+    assert.equal(first.status, 201);
+    assert.equal(duplicate.body.votingEligible, true);
+    const vote = (key, choice) => s.call('POST', '/api/condos/lumina/proposal/vote', { residentKey: key, vote: choice });
+    assert.equal((await vote(first.body.residentKey, 'yes')).status, 200);
+    let result = await vote(duplicate.body.residentKey, 'no');
+    assert.equal(result.status, 200);
+    assert.deepEqual([result.body.tally.yes, result.body.tally.no, result.body.tally.cast], [0, 1, 1], 'two keys for the same unit count as one vote');
+    assert.ok(!JSON.stringify(result.body).includes(first.body.residentKey));
+    assert.ok(!JSON.stringify(result.body).includes('A-12-08'));
+    result = await vote(first.body.residentKey, 'yes');
+    assert.equal(result.body.tally.cast, 1);
+
+    // Demo preview must not change the official tally or community settings.
+    const sample = await s.call('POST', '/api/jmb/lumina/proposal/sample', {}, token);
+    assert.equal(sample.status, 200);
+    assert.ok(sample.body.proposal.demoPreview);
+    assert.equal(sample.body.tally.cast, 1);
+    const closed = await s.call('POST', '/api/jmb/lumina/proposal/close', {}, token);
+    assert.equal(closed.body.proposal.status, 'passed', 'single unit meets 10% quorum when there are ten units');
+    assert.equal((await s.call('GET', '/api/world')).body.sharing.lumina.mode, 'auto');
+  } finally {
+    await s.close();
+  }
+});
+
+test('revocation and cross-condo credentials cannot influence voting', async () => {
   const s = await start();
+  try {
+    const lumina = (await s.call('POST', '/api/jmb/login', { condoId: 'lumina', pin: '4821' })).body.token;
+    const serini = (await s.call('POST', '/api/jmb/login', { condoId: 'serini', pin: '7305' })).body.token;
+    const settings = { enabled: true, mode: 'auto', days: 'all', start: 9, end: 17, reservedBays: 2, visitorPrice: 1.2 };
+    await s.call('POST', '/api/jmb/lumina/proposal', { settings }, lumina);
+    const other = (await s.call('POST', '/api/jmb/serini/resident-keys', { unitId: 'A-12-08' }, serini)).body;
+    const mine = (await s.call('POST', '/api/jmb/lumina/resident-keys', { unitId: 'A-12-08' }, lumina)).body;
+    assert.equal((await s.call('POST', '/api/condos/lumina/proposal/vote', { residentKey: other.residentKey, vote: 'yes' })).status, 403);
+    assert.equal((await s.call('DELETE', `/api/jmb/lumina/resident-keys/${mine.keyId}`, null, lumina)).status, 200);
+    assert.equal((await s.call('POST', '/api/condos/lumina/proposal/vote', { residentKey: mine.residentKey, vote: 'yes' })).status, 403);
+    assert.equal((await s.call('GET', '/api/condos/lumina/proposal')).body.tally.cast, 0);
+  } finally {
+    await s.close();
+  }
+});
+
+test('simulated votes cannot enact sharing even when the preview predicts a pass', async () => {
+  const pilot = { ...CONDOS.find(c => c.id === 'lumina'), units: 10 };
+  const s = await start({ condos: [pilot] });
+  try {
+    const token = (await s.call('POST', '/api/jmb/login', { condoId: 'lumina', pin: '4821' })).body.token;
+    const settings = { enabled: true, mode: 'auto', days: 'all', start: 9, end: 17, reservedBays: 2, visitorPrice: 1.2 };
+    await s.call('POST', '/api/jmb/lumina/proposal', { settings }, token);
+    const sample = (await s.call('POST', '/api/jmb/lumina/proposal/sample', {}, token)).body;
+    assert.ok(sample.proposal.sampleVotes);
+    assert.equal(sample.tally.cast, 0);
+    const closed = await s.call('POST', '/api/jmb/lumina/proposal/close', {}, token);
+    assert.equal(closed.body.proposal.status, 'failed');
+    assert.notEqual((await s.call('GET', '/api/world')).body.sharing.lumina?.mode, 'auto');
+  } finally {
+    await s.close();
+  }
+});
+
+test('API prevents overbooking and releases cancelled slots', async () => {
+  const s = await start();
+
+  try {
+    const confirmed = [];
+
+    // Lumina has 10 bays, with 2 reserved for residents.
+    // Therefore, only 8 simultaneous visitor bookings are allowed.
+    for (let i = 0; i < 8; i++) {
+      const result = await s.call('POST', '/api/bookings', {
+        session: session({ anonId: `V${i + 1}` }),
+        booking: booking(),
+        pass: { plate: `WXY${1000 + i}`, consent: true }
+      });
+
+      assert.equal(result.status, 201);
+      confirmed.push(result.body);
+    }
+
+    // Ninth visitor must be rejected.
+    const ninth = await s.call('POST', '/api/bookings', {
+      session: session({ anonId: 'V9' }),
+      booking: booking(),
+      pass: { plate: 'WXY9999', consent: true }
+    });
+
+    assert.equal(ninth.status, 409);
+
+    // JMB logs in to issue resident access keys.
+    const login = await s.call(
+      'POST',
+      '/api/jmb/login',
+      { condoId: 'lumina', pin: '4821' }
+    );
+
+    assert.equal(login.status, 200);
+
+    // Two verified residents can use their reserved capacity.
+    for (let i = 0; i < 2; i++) {
+
+      // JMB issues a unique key for each resident.
+      const issued = await s.call(
+        'POST',
+        '/api/jmb/lumina/resident-keys',
+        {},
+        login.body.token
+      );
+
+      assert.equal(issued.status, 201);
+
+      // Resident books using their issued key.
+      const resident = await s.call(
+        'POST',
+        '/api/bookings',
+        {
+          session: session({
+            anonId: `R${i + 1}`,
+            role: 'resident'
+          }),
+          booking: booking(),
+          residentKey: issued.body.residentKey
+        }
+      );
+
+      assert.equal(resident.status, 201);
+    }
+
+    // Issue a valid key for the third resident.
+    const thirdKey = await s.call(
+      'POST',
+      '/api/jmb/lumina/resident-keys',
+      {},
+      login.body.token
+    );
+
+    assert.equal(thirdKey.status, 201);
+
+    // Third resident has valid access,
+    // but all physical bays are occupied.
+    const thirdResident = await s.call(
+      'POST',
+      '/api/bookings',
+      {
+        session: session({
+          anonId: 'R3',
+          role: 'resident'
+        }),
+        booking: booking(),
+        residentKey: thirdKey.body.residentKey
+      }
+    );
+
+    assert.equal(thirdResident.status, 409);
+
+    // Cancel one visitor reservation.
+    const cancelled = await s.call(
+      'DELETE',
+      `/api/bookings/${confirmed[0].bookingId}`,
+      { cancelToken: confirmed[0].cancelToken }
+    );
+
+    assert.equal(cancelled.status, 200);
+
+    // That slot should become available again.
+    const replacement = await s.call('POST', '/api/bookings', {
+      session: session({ anonId: 'V10' }),
+      booking: booking(),
+      pass: { plate: 'WXY8888', consent: true }
+    });
+
+    assert.equal(replacement.status, 201);
+
+  } finally {
+    await s.close();
+  }
+});
+
+test('Residents require JMB-issued access keys', async () => {
+  const s = await start();
+
+  try {
+    const residentSession = session({
+      role: 'resident',
+      anonId: 'R12'
+    });
+
+    const payload = {
+      session: residentSession,
+      booking: booking()
+    };
+
+    // Claiming resident status is insufficient.
+    const noKey = await s.call(
+      'POST', '/api/bookings', payload
+    );
+
+    assert.equal(noKey.status, 403);
+
+    // Visitors cannot issue their own access keys.
+    const unauthorized = await s.call(
+      'POST', '/api/jmb/lumina/resident-keys', {}
+    );
+
+    assert.equal(unauthorized.status, 401);
+
+    // The JMB authenticates.
+    const login = await s.call(
+      'POST',
+      '/api/jmb/login',
+      { condoId: 'lumina', pin: '4821' }
+    );
+
+    // An approved resident receives a key.
+    const issued = await s.call(
+      'POST',
+      '/api/jmb/lumina/resident-keys',
+      {},
+      login.body.token
+    );
+
+    assert.equal(issued.status, 201);
+
+    // That key permits a resident reservation.
+    const confirmed = await s.call(
+      'POST',
+      '/api/bookings',
+      {
+        ...payload,
+        residentKey: issued.body.residentKey
+      }
+    );
+
+    assert.equal(confirmed.status, 201);
+
+  } finally {
+    await s.close();
+  }
+});
+
+test('Resident keys cannot access another condo', async () => {
+  const s = await start();
+
+  try {
+    // JMB of Serini logs in.
+    const login = await s.call(
+      'POST',
+      '/api/jmb/login',
+      { condoId: 'serini', pin: '7305' }
+    );
+
+    assert.equal(login.status, 200);
+
+    // Issue a Serini resident key.
+    const issued = await s.call(
+      'POST',
+      '/api/jmb/serini/resident-keys',
+      {},
+      login.body.token
+    );
+
+    assert.equal(issued.status, 201);
+
+    // Attempt to book at Lumina using the Serini key.
+    const result = await s.call(
+      'POST',
+      '/api/bookings',
+      {
+        session: session({
+          anonId: 'R1',
+          role: 'resident'
+        }),
+        booking: booking(),
+        residentKey: issued.body.residentKey
+      }
+    );
+
+    assert.equal(result.status, 403);
+
+  } finally {
+    await s.close();
+  }
+});
+
+test('Faulty bays reduce capacity until repaired', async () => {
+  const s = await start();
+
+  try {
+    const login = await s.call(
+      'POST',
+      '/api/jmb/login',
+      { condoId: 'lumina', pin: '4821' }
+    );
+
+    const token = login.body.token;
+
+    // JMB reports Bay 1 as faulty.
+    const fault = await s.call(
+      'POST',
+      '/api/jmb/lumina/maintenance',
+      {
+        entry: {
+          bay: 1,
+          kind: 'fault',
+          costRm: 0,
+          at: WED11,
+          note: 'Charger offline'
+        }
+      },
+      token
+    );
+
+    assert.equal(fault.status, 201);
+
+    // With 1 faulty bay, only 7 visitor bays remain.
+    for (let i = 0; i < 7; i++) {
+      const result = await s.call(
+        'POST',
+        '/api/bookings',
+        {
+          session: session({
+            anonId: `V${i + 1}`
+          }),
+          booking: booking(),
+          pass: {
+            plate: `WXY${1000 + i}`,
+            consent: true
+          }
+        }
+      );
+
+      assert.equal(result.status, 201);
+    }
+
+    // The eighth visitor must be rejected.
+    const rejected = await s.call(
+      'POST',
+      '/api/bookings',
+      {
+        session: session({ anonId: 'V8' }),
+        booking: booking(),
+        pass: {
+          plate: 'WXY9999',
+          consent: true
+        }
+      }
+    );
+
+    assert.equal(rejected.status, 409);
+
+    // JMB repairs the charger.
+    const repaired = await s.call(
+      'POST',
+      '/api/jmb/lumina/maintenance',
+      {
+        entry: {
+          bay: 1,
+          kind: 'repair',
+          costRm: 150,
+          at: WED11 + 60000,
+          note: 'Charger repaired'
+        }
+      },
+      token
+    );
+
+    assert.equal(repaired.status, 201);
+
+    // Eighth visitor should now be accepted.
+    const accepted = await s.call(
+      'POST',
+      '/api/bookings',
+      {
+        session: session({ anonId: 'V8' }),
+        booking: booking(),
+        pass: {
+          plate: 'WXY9999',
+          consent: true
+        }
+      }
+    );
+
+    assert.equal(accepted.status, 201);
+
+  } finally {
+    await s.close();
+  }
+});
+test('JMB can list and revoke resident keys without exposing the secret', async () => {
+  const s = await start();
+  try {
+    const login = await s.call('POST', '/api/jmb/login', { condoId: 'lumina', pin: '4821' });
+    const seriniLogin = await s.call('POST', '/api/jmb/login', { condoId: 'serini', pin: '7305' });
+    const token = login.body.token;
+    const issued = await s.call('POST', '/api/jmb/lumina/resident-keys', {}, token);
+    assert.equal(issued.status, 201);
+    assert.match(issued.body.keyId, /^[a-f0-9]{16}$/);
+    assert.equal(issued.headers.get('cache-control'), 'no-store');
+
+    assert.equal((await s.call('GET', '/api/jmb/lumina/resident-keys')).status, 401);
+    assert.equal((await s.call('GET', '/api/jmb/lumina/resident-keys', null, seriniLogin.body.token)).status, 401);
+    const listing = await s.call('GET', '/api/jmb/lumina/resident-keys', null, token);
+    assert.equal(listing.status, 200);
+    assert.equal(listing.body.keys.length, 1);
+    assert.equal(listing.body.keys[0].active, true);
+    assert.ok(!JSON.stringify(listing.body).includes(issued.body.residentKey));
+    assert.equal((await s.call('DELETE', `/api/jmb/serini/resident-keys/${issued.body.keyId}`, null, seriniLogin.body.token)).status, 404);
+
+    const access = () => s.call('POST', '/api/bookings', {
+      session: session({ role: 'resident', anonId: 'R15' }), booking: booking(),
+      residentKey: issued.body.residentKey,
+    });
+    assert.equal((await access()).status, 201);
+
+    assert.equal((await s.call('DELETE', `/api/jmb/lumina/resident-keys/${issued.body.keyId}`)).status, 401);
+    assert.equal((await s.call('DELETE', `/api/jmb/lumina/resident-keys/${issued.body.keyId}`, null, token)).status, 200);
+    assert.equal((await access()).status, 403);
+    const after = await s.call('GET', '/api/jmb/lumina/resident-keys', null, token);
+    assert.equal(after.body.keys[0].active, false);
+    assert.ok(after.body.keys[0].revokedAt != null);
+  } finally { await s.close(); }
+});
+
+test('direct-server login does not trust spoofed X-Forwarded-For values', async () => {
+  const s = await start();
+  try {
+    for (let i = 0; i < 10; i++) {
+      const r = await fetch(s.base + '/api/jmb/login', {
+        method: 'POST', headers: { 'content-type': 'application/json', 'x-forwarded-for': `198.51.100.${i + 1}` },
+        body: JSON.stringify({ condoId: 'lumina', pin: 'wrong' }),
+      });
+      assert.equal(r.status, 401);
+    }
+    const blocked = await fetch(s.base + '/api/jmb/login', {
+      method: 'POST', headers: { 'content-type': 'application/json', 'x-forwarded-for': '203.0.113.5' },
+      body: JSON.stringify({ condoId: 'lumina', pin: '4821' }),
+    });
+    assert.equal(blocked.status, 429);
+  } finally { await s.close(); }
+});
+
+test('legacy device-ID proposals cannot be counted or enacted after upgrade', async () => {
+  const dir = tmp();
   const settings = { enabled: true, mode: 'auto', days: 'all', start: 9, end: 17, reservedBays: 2, visitorPrice: 1.2 };
-  assert.equal((await s.call('POST', '/api/jmb/lumina/proposal', { settings })).status, 401);
-  const token = (await s.call('POST', '/api/jmb/login', { condoId: 'lumina', pin: '4821' })).body.token;
-  assert.equal((await s.call('POST', '/api/jmb/lumina/proposal', { settings }, token)).status, 201);
-  let pub = (await s.call('GET', '/api/condos/lumina/proposal')).body;
-  assert.equal(pub.proposal.status, 'open');
-  assert.equal(pub.proposal.votes, undefined, 'individual votes stay private');
-  assert.equal((await s.call('POST', '/api/condos/lumina/proposal/vote', { voterId: 'bad id!', vote: 'yes' })).status, 400);
-  await s.call('POST', '/api/condos/lumina/proposal/vote', { voterId: 'device-1234', vote: 'yes' });
-  pub = (await s.call('POST', '/api/condos/lumina/proposal/vote', { voterId: 'device-1234', vote: 'no' })).body;
-  assert.deepEqual([pub.tally.yes, pub.tally.no], [0, 1], 'a device can change its vote, not vote twice');
-  const closedEarly = (await s.call('POST', '/api/jmb/lumina/proposal/close', {}, token)).body;
-  assert.equal(closedEarly.proposal.status, 'failed');
-  assert.notEqual((await s.call('GET', '/api/world')).body.sharing.lumina?.mode, 'auto', 'a failed vote changes nothing');
-  await s.call('POST', '/api/jmb/lumina/proposal', { settings }, token);
-  const sample = (await s.call('POST', '/api/jmb/lumina/proposal/sample', {}, token)).body;
-  assert.ok(sample.proposal.sampleVotes > 0 && sample.tally.quorumMet);
-  const passed = (await s.call('POST', '/api/jmb/lumina/proposal/close', {}, token)).body;
-  assert.equal(passed.proposal.status, 'passed');
-  assert.equal((await s.call('GET', '/api/world')).body.sharing.lumina.mode, 'auto');
-  await s.close();
+  fs.writeFileSync(path.join(dir, 'store.json'), JSON.stringify({
+    proposals: { lumina: { id: 'old-device-vote', condoId: 'lumina', status: 'open',
+      settings, createdAt: 100, closesAt: Date.now() + 864e5,
+      votes: { 'fake-device-a': 'yes', 'fake-device-b': 'yes' } } }
+  }));
+  const s = await start({ dataDir: dir });
+  try {
+    const pub = await s.call('GET', '/api/condos/lumina/proposal');
+    assert.equal(pub.body.proposal.legacyUnverified, true);
+    assert.equal(pub.body.tally.cast, 0, 'legacy votes have no verified eligibility');
+    assert.equal((await s.call('POST', '/api/condos/lumina/proposal/vote', { voterId: 'fake-device-c', vote: 'yes' })).status, 409);
+    const token = (await s.call('POST', '/api/jmb/login', { condoId: 'lumina', pin: '4821' })).body.token;
+    assert.equal((await s.call('POST', '/api/jmb/lumina/proposal/close', {}, token)).status, 409);
+    assert.notEqual((await s.call('GET', '/api/world')).body.sharing.lumina?.mode, 'auto');
+    const replacement = await s.call('POST', '/api/jmb/lumina/proposal', { settings }, token);
+    assert.equal(replacement.status, 201);
+    assert.equal(replacement.body.proposal.votingScheme, 'verified-unit-v1');
+  } finally {
+    await s.close();
+  }
 });

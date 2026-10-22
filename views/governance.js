@@ -62,6 +62,9 @@ async function run(ctx, condo, local, remote) {
   return r;
 }
 
+// Keep the resident credential only in memory, never in persisted profile data.
+// On mobile a native prompt is a temporary MVP input; replace with a proper field later.
+const votingKeys = new Map();
 export function vote(ctx, condo, choice) {
   const { proposal } = proposalFor(ctx, condo);
   if (!proposal) return Promise.resolve({ ok: false, error: 'No vote is open.' });
@@ -72,7 +75,14 @@ export function vote(ctx, condo, choice) {
     remember(ctx, proposal, choice);
     return null;
   }, async () => {
-    const r = await ctx.api.vote(condo.id, voterId(ctx), choice);
+    let key = votingKeys.get(condo.id);
+    if (!key) {
+      key = globalThis.prompt?.(`Enter your JMB-issued, unit-verified resident key for ${condo.name}:`)?.trim();
+      if (!key) return { ok: false, error: 'A unit-verified resident key is required to vote.' };
+      votingKeys.set(condo.id, key);
+    }
+    const r = await ctx.api.vote(condo.id, key, choice);
+    if (r.status === 403) votingKeys.delete(condo.id);
     if (r.ok) remember(ctx, proposal, choice);
     return r;
   });
@@ -101,8 +111,8 @@ export function sampleVotes(ctx, condo, token) {
     let p = ctx.state.proposals?.[condo.id];
     if (!p || p.status !== 'open') return 'No open vote.';
     const n = Math.max(1, Math.round(condo.units * 0.18));
-    for (let i = 0; i < n; i++) p = castVote(p, `sample-${i}`, i % 10 < 7 ? 'yes' : 'no', Date.now()).proposal;
-    ctx.state.proposals[condo.id] = { ...p, sampleVotes: n };
+    const yes = Math.floor(n * 0.7);
+    ctx.state.proposals[condo.id] = { ...p, sampleVotes: n, demoPreview: { yes, no: n - yes, label: 'SAMPLE ONLY' } };
     return null;
   }, () => ctx.api.sampleVotes(condo.id, token));
 }
@@ -116,16 +126,18 @@ export function proposalHtml(condo, data, role, canManage = false) {
   const head = p.status === 'open'
     ? `<span class="chip amber-tag">Vote open</span> until ${esc(fmtDay(new Date(p.closesAt)))}`
     : p.status === 'passed' ? `<span class="chip on">Passed</span> ${esc(fmtDay(new Date(p.closedAt)))}: now in force` : `<span class="chip warn">Not passed</span> ${esc(fmtDay(new Date(p.closedAt)))}: nothing changed`;
-  const buttons = p.status !== 'open' ? '' : role === 'resident'
+  const buttons = p.status !== 'open' || p.legacyUnverified ? '' : role === 'resident'
     ? `<div class="btn-row vote-btns"><button type="button" class="btn ${data.myVote === 'yes' ? 'primary' : ''}" data-vote="yes" aria-pressed="${data.myVote === 'yes'}">Yes</button>
         <button type="button" class="btn ${data.myVote === 'no' ? 'primary' : ''}" data-vote="no" aria-pressed="${data.myVote === 'no'}">No</button></div>
-        <p class="muted">${data.myVote ? `You voted ${data.myVote}. You can change it until the vote closes.` : 'One vote per resident. Only the totals are shown.'}</p>`
+        <p class="muted">${data.myVote ? `You voted ${data.myVote}. You can change it until the vote closes.` : 'One vote per JMB-verified unit. A unit-verified resident key is required.'}</p>`
     : canManage ? `<div class="btn-row"><button type="button" class="btn small" data-sample>Add sample votes (demo)</button><button type="button" class="btn small primary" data-close-vote>Close the vote now</button></div>` : '';
   return `<div class="vote-card">
     <p class="vote-head">${head}</p>
     <p><b>Proposed:</b> ${esc(describeSharing(p.settings))}</p>
     <div class="tally" role="img" aria-label="${t.yes} yes, ${t.no} no"><span style="width:${yesPct}%"></span></div>
     <p class="muted">${t.yes} yes · ${t.no} no · ${t.cast} of ${condo.units} units voted. Passes with more yes than no and at least ${t.quorum} votes (${Math.round(QUORUM * 100)}% of units)${t.quorumMet ? ' ✓' : ''}.${p.sampleVotes ? ` Includes ${p.sampleVotes} sample votes for the demo.` : ''}</p>
+    ${p.legacyUnverified ? '<p class="error">Older device-ID votes are not verified. JMB must create a new proposal before settings can change.</p>' : ''}
+    ${p.demoPreview ? `<p class="muted">Non-binding demo preview: ${p.demoPreview.yes} yes, ${p.demoPreview.no} no. These sample votes are NOT counted.</p>` : ''}
     ${buttons}
   </div>`;
 }

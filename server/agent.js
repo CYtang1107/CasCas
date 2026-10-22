@@ -3,6 +3,7 @@
 import { TOOLS, AGENT_OF, runTool, guardInput, amountsGrounded, systemPrompt } from '../engine/agent.js';
 
 const MAX_ROUNDS = 4;
+const MAX_CALLS_PER_ROUND = 8;
 const RETRY_STATUS = new Set([400, 401, 403, 404, 429, 500, 502, 503]);
 
 export function createAgent({ key, baseUrl = 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1', models = ['qwen-plus-latest', 'qwen-flash'], fetchFn = globalThis.fetch, now = () => Date.now(), perIp = 20, windowMs = 10 * 60e3, perDay = 1500, timeoutMs = 25000 }) {
@@ -24,16 +25,26 @@ export function createAgent({ key, baseUrl = 'https://dashscope-intl.aliyuncs.co
     return true;
   }
 
+  // Providers differ in trailing-slash conventions; avoid a double slash in the REST path.
+  const chatUrl = `${String(baseUrl).replace(/\/+$/, '')}/chat/completions`;
+  const isGemini = (() => {
+    try { return new URL(chatUrl).hostname === 'generativelanguage.googleapis.com'; }
+    catch { return false; }
+  })();
+
   async function complete(messages, useTools) {
     let lastErr = 'no model';
     for (const model of models) {
+      // Gemini 3.x spends additional time reasoning by default. Low effort makes
+      // conversational tool use faster; other providers retain their settings.
+      const gemini3 = isGemini && /^gemini-3(?:[.-]|$)/i.test(model);
       const ctrl = new AbortController();
       const timer = setTimeout(() => ctrl.abort(), timeoutMs);
       try {
-        const res = await fetchFn(`${baseUrl}/chat/completions`, {
+        const res = await fetchFn(chatUrl, {
           method: 'POST', signal: ctrl.signal,
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
-          body: JSON.stringify({ model, messages, temperature: 0.2, max_tokens: 500, ...(useTools ? { tools: TOOLS, tool_choice: 'auto' } : {}) }),
+          body: JSON.stringify({ model, messages, ...(gemini3 ? { reasoning_effort: 'low' } : { temperature: 0.2 }), max_tokens: 500, ...(useTools ? { tools: TOOLS, tool_choice: 'auto' } : {}) }),
         });
         if (!res.ok) {
           let why = '';
@@ -65,7 +76,9 @@ export function createAgent({ key, baseUrl = 'https://dashscope-intl.aliyuncs.co
       { role: 'user', content: text },
     ];
     const steps = [{ agent: 'Orchestrator', did: 'Read your request' }];
-    const sources = [text];
+    // Only tool output counts as numerical evidence; user input is not verified pricing.
+    const sources = [];
+    let usedRevenueForecast = false;
     const citations = [];
     const actions = [];
     let cards = [];
@@ -75,14 +88,25 @@ export function createAgent({ key, baseUrl = 'https://dashscope-intl.aliyuncs.co
     for (let round = 0; round <= MAX_ROUNDS; round++) {
       const r = await complete(messages, round < MAX_ROUNDS);
       model = r.model;
-      const calls = r.msg.tool_calls || [];
+      const calls = Array.isArray(r.msg.tool_calls) ? r.msg.tool_calls : [];
       if (!calls.length) { reply = String(r.msg.content || '').trim(); break; }
       messages.push({ role: 'assistant', content: r.msg.content || '', tool_calls: calls });
-      for (const call of calls) {
+      for (const [index, call] of calls.entries()) {
         const name = call.function?.name;
         let args = {};
-        try { args = JSON.parse(call.function?.arguments || '{}'); } catch { /* empty args */ }
-        const out = runTool(name, args, env);
+        let out;
+        if (index >= MAX_CALLS_PER_ROUND) {
+          out = { error: 'Too many tool calls in one response. Please narrow the request.' };
+        } else {
+          try {
+            args = JSON.parse(call.function?.arguments || '{}');
+            if (!args || typeof args !== 'object' || Array.isArray(args)) throw new Error('Invalid arguments');
+            out = runTool(name, args, env);
+          } catch {
+            out = { error: 'Invalid tool arguments or unable to calculate. Ask the driver to clarify.' };
+          }
+        }
+        if (name === 'condo_revenue' && out.simulated) usedRevenueForecast = true;
         const outText = JSON.stringify(out);
         sources.push(outText);
         steps.push({ agent: AGENT_OF[name] || 'Agent', did: describe(name, args) });
@@ -106,6 +130,9 @@ export function createAgent({ key, baseUrl = 'https://dashscope-intl.aliyuncs.co
         check = amountsGrounded(reply, sources);
       } catch { check = { ok: false }; }
       if (!check.ok) reply = 'I could not check every amount in my answer, so I have left them out. Open the suggestions on the Map or Plan screen for prices worked out by CasSama.';
+    }
+    if (usedRevenueForecast && reply && !/simulat|forecast|projection|illustrat|scenario/i.test(reply)) {
+      reply = `Simulated monthly forecast (not recorded receipts): ${reply}`;
     }
     if (!reply) reply = 'Sorry, I could not work that out. Try asking about where to charge, a trip, or how condo sharing works.';
     steps.push({ agent: 'Guardrail', did: 'Checked amounts against the agents\' results' });
