@@ -59,8 +59,7 @@ export function renderJmb(root, ctx) {
   <div class="jmb">
     <div class="view-head">
       <div><h1>${esc(condo.name)}</h1>
-        <p class="context-line">JMB dashboard · ${esc(start.toLocaleString('en-MY', { month: 'long', year: 'numeric' }))}</p>
-        <p class="muted">${condo.units} units · ${condo.bays} charging bays · the JMB keeps ${pct(condo.jmbShare)} of the margin, the charging partner keeps the rest</p></div>
+        <p class="context-line">JMB dashboard · ${esc(start.toLocaleString('en-MY', { month: 'long', year: 'numeric' }))}</p></div>
       <label class="field inline">Condo <select id="j-condo"><option value="cpo">CPO: all sites</option>${condos.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select></label>
     </div>
 
