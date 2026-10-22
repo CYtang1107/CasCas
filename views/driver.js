@@ -800,8 +800,7 @@ function tripHtml(t, place, ctx, rd = null) {
     ${roadNote(t, rd, ctx)}
     <p class="muted">${t.stops.length ? 'CasSama charges only what the next leg needs, and never past 80%, where fast charging slows down, so stops stay short.' : `No stop needed: you arrive with ${Math.round(t.arrivePct)}%.`} Highway chargers are demo data.</p>
     ${stepsHtml(rd)}
-    <div class="btn-row"><a class="btn primary grow" href="${esc(t.directionsUrl)}" target="_blank" rel="noopener">${IC.nav}Start in Google Maps</a>
-      <a class="btn" href="https://waze.com/ul?ll=${(t.stops[0]?.charger || place).lat},${(t.stops[0]?.charger || place).lng}&navigate=yes" target="_blank" rel="noopener">Waze${t.stops.length ? ' to stop 1' : ''}</a></div>`;
+    <div class="btn-row"><a class="btn primary grow" href="${esc(t.directionsUrl)}" target="_blank" rel="noopener">${IC.nav}Start in Google Maps</a></div>`;
 }
 
 // Where the trip numbers come from, and what traffic usually adds at this hour.
