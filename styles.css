@@ -1295,7 +1295,6 @@ main:has(> .loading) { min-height: 100vh; min-height: 100dvh; }
   opacity: 0; transform: scale(.98); transform-origin: top right; pointer-events: none;
   transition: opacity .28s ease-out, transform .28s ease-out, box-shadow .28s ease-out, border-color .28s ease-out;
 }
-.charging-workspace .recommendation-sheet[data-panel="hovered"] { opacity: .45; }
 .charging-workspace .recommendation-sheet[data-panel="active"] {
   opacity: 1; transform: none; pointer-events: auto; border-color: var(--line);
   box-shadow: 0 0 0 1px rgba(91, 214, 180, .12), var(--shadow);
@@ -1359,3 +1358,23 @@ main:has(> .loading) { min-height: 100vh; min-height: 100dvh; }
 .breakeven .bar span { background: var(--accent); }
 /* JMB: Fixed hours vs Auto — the mode in use is tagged; the better earner is outlined. */
 .cmp span em.chip { font-style: normal; font-size: .7rem; padding: 2px 6px; margin-left: 4px; vertical-align: 1px; }
+
+/* Plan map: recommended chargers by default, with an explicit all-stations choice. */
+.map-mode-toggle {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
+  margin-bottom: -8px;
+}
+.map-mode-toggle button {
+  min-height: 44px; padding: 10px 14px; border: 1px solid var(--line);
+  border-radius: 999px; background: var(--surface); color: var(--muted);
+  font: 600 .88rem/1.2 var(--body); cursor: pointer;
+}
+.map-mode-toggle button[aria-pressed="true"] {
+  background: var(--accent); color: var(--accent-ink); border-color: var(--accent);
+}
+.map-mode-toggle button:focus-visible { outline: 2px solid var(--fg); outline-offset: 2px; }
+.map-marker-count { font-size: .8rem; color: var(--muted); margin-left: 4px; }
+/* Keep all markers tappable: only visual opacity changes while one is selected. */
+.pin { transition: opacity .18s ease-in-out; }
+.pin.is-muted { opacity: .5; }
+@media (prefers-reduced-motion: reduce) { .pin { transition: none; } }

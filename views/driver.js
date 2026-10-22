@@ -2,6 +2,7 @@ import { CONST } from '../config.js';
 import { CARS } from '../data/cars.js';
 import { PLACES, START } from '../data/places.js';
 import { rankChargers, MODES, formatDuration } from '../engine/score.js';
+import { visibleMapChargerIds } from '../engine/map-visibility.js';
 import { priceAt } from '../engine/pricing.js';
 import { isOpenToVisitors } from '../engine/sharing.js';
 import { occupancyAt } from '../engine/occupancy.js';
@@ -146,7 +147,7 @@ function originPoint() {
 const placeOf = (id) => (id === 'custom' && ui.customTo
   ? { ...ui.customTo, trip: isTrip(originPoint(), ui.customTo) }
   : ALL_PLACES.find((p) => p.id === id) || PLACES[0]);
-const fresh = () => ({ carId: 'emas7', battery: 35, placeId: 'klem', homeId: '', parkFor: '30m', stage: 'pick', pick: null, flash: '', flashTarget: 'activity', pending: null, plate: '', selected: null, prefs: noPrefs(), ask: '', askNote: '', arriveMin: 20, filters: emptyFilters(), from: null, customTo: null, locMsg: '', residentKey: '' });
+const fresh = () => ({ carId: 'emas7', battery: 35, placeId: 'klem', homeId: '', parkFor: '30m', stage: 'pick', pick: null, flash: '', flashTarget: 'activity', pending: null, plate: '', selected: null, mapMode: 'recommended', prefs: noPrefs(), ask: '', askNote: '', arriveMin: 20, filters: emptyFilters(), from: null, customTo: null, locMsg: '', residentKey: '' });
 let ui = fresh();
 let map = null;
 let layer = null;
@@ -264,6 +265,11 @@ export function renderDriver(root, ctx, which = 'home') {
         </div>
       </details>
     </section></details>
+    <div class="map-mode-toggle" role="group" aria-label="Stations visible on the Plan map">
+      <button type="button" data-map-mode="recommended" aria-pressed="${ui.mapMode === 'recommended'}">Recommended</button>
+      <button type="button" data-map-mode="all" aria-pressed="${ui.mapMode === 'all'}">All stations</button>
+      <span class="map-marker-count" id="d-map-count" role="status" aria-live="polite"></span>
+    </div>
     <div class="charging-workspace">
     ${mapRow('compact')}
     <button type="button" class="panel-tab" data-panel-toggle aria-controls="d-sheet" aria-expanded="false">${IC.bolt}<span>Charge options</span></button>
@@ -296,6 +302,13 @@ export function renderDriver(root, ctx, which = 'home') {
     renderDriver(root, ctx, 'plan');
   }));
   if (which === 'plan') {
+    root.querySelectorAll('[data-map-mode]').forEach((button) => button.addEventListener('click', () => {
+      const mode = button.dataset.mapMode;
+      if (mode === ui.mapMode) return;
+      ui.mapMode = mode;
+      ui.selected = null;
+      update(root, ctx);
+    }));
     $('#d-car').value = ui.carId;
     $('#d-batt').value = ui.battery;
     $(`input[name="d-park"][value="${ui.parkFor}"]`).checked = true;
@@ -1013,6 +1026,19 @@ function stageHtml(ctx, r) {
       </form>`;
   }
   if (ui.stage === 'booked') {
+    const bookedCharger = [...ctx.world.chargers, ...HIGHWAY_CHARGERS]
+      .find((charger) => charger.id === p.chargerId);
+
+    const directions = bookedCharger &&
+      Number.isFinite(bookedCharger.lat) &&
+      Number.isFinite(bookedCharger.lng)
+        ? `<a class="btn"
+              href="${esc(navUrl(bookedCharger))}"
+              target="_blank"
+              rel="noopener noreferrer">
+              ${IC.nav} Directions
+          </a>`
+        : '';
     // A trip stop is held from the planned arrival time; a nearby charger from now.
     const until = new Date((p.arriveAt || p.bookedAt) + CONST.holdMinutes * 60000);
     const pass = p.pass
@@ -1030,7 +1056,7 @@ function stageHtml(ctx, r) {
         <p class="muted">Check-in is allowed during your actual reservation time. Select an available physical bay when you arrive.</p>
         ${p.baysError ? `<p class="error" role="alert">${esc(p.baysError)}</p>` : ''}
         ${selector}
-        <div class="btn-row"><button class="btn" type="button" data-act="load-bays" ${p.baysLoading ? 'disabled' : ''}>${p.baysLoading ? 'Checking bays…' : 'Find / refresh available bays'}</button>
+        <div class="btn-row">${directions}<button class="btn" type="button" data-act="load-bays" ${p.baysLoading ? 'disabled' : ''}>${p.baysLoading ? 'Checking bays…' : 'Find / refresh available bays'}</button>
         <button class="btn" type="button" data-act="cancel">Cancel booking</button></div>`;
     }
     return `${journey}<h2>Bay held (demo)</h2>
@@ -1039,7 +1065,7 @@ function stageHtml(ctx, r) {
       <p><b>${esc(p.name)}</b> is held for you ${p.arriveAt ? `from your planned arrival at ${esc(fmtTime(new Date(p.arriveAt)))} for ${CONST.holdMinutes} minutes, until ${esc(fmtClock(until))}` : `for ${CONST.holdMinutes} minutes, until ${esc(fmtTime(until))}`}.</p>
       ${qrSvg(p.chargerId)}
       <p class="muted">Demo QR illustration. This offline/public-charger experience simulates charging; no charger is started.</p>
-      <div class="btn-row"><button class="btn primary" type="button" data-act="start">Start simulated charging</button>
+      <div class="btn-row"><button class="btn primary" type="button" data-act="start">Start simulated charging</button>${directions}
       <button class="btn" type="button" data-act="cancel">Cancel booking</button></div>`;
   }
   if (ui.stage === 'charging') {
@@ -1588,8 +1614,15 @@ function initMap(el, fallback) {
   }).addTo(map);
   tiles.on('tileerror', () => { fallback.hidden = false; });
   layer = L.layerGroup().addTo(map);
-  // A click on empty map (not a marker, popup or control) tells the floating panel to step back.
-  map.on('click', () => document.dispatchEvent(new CustomEvent('cassama:mapclick')));
+  // Empty map click clears focus without opening the right options panel.
+  map.on('click', () => {
+    if (ui.selected && current && last) {
+      ui.selected = null;
+      highlightMarker(null);
+      renderDetail(current.root, current.ctx, last.ranking, last.car);
+    }
+    document.dispatchEvent(new CustomEvent('cassama:mapclick'));
+  });
 }
 
 // What the filters need to know about one charger right now.
@@ -1791,11 +1824,22 @@ function drawMarkers(root, ctx, origin, r, car) {
   if (!map) return;
   layer.clearLayers();
   markers = new Map();
+  const filtered = ctx.world.chargers.filter((ch) => passesFilter(ch, ctx));
+  const visible = visibleMapChargerIds(filtered, r.results, tab === 'plan' ? ui.mapMode : 'all');
+  if (tab === 'plan' && ui.selected && !visible.has(ui.selected)) ui.selected = null;
+  const count = root.querySelector('#d-map-count');
+  if (count) {
+    const qty = visible.size;
+    count.textContent = `${qty} station${qty === 1 ? '' : 's'} on map`;
+    root.querySelectorAll('[data-map-mode]').forEach((button) => {
+      button.setAttribute('aria-pressed', String(button.dataset.mapMode === ui.mapMode));
+    });
+  }
   const top = new Set(r.results.slice(0, 3).map((c) => c.charger.id));
   const off = new Map(r.excluded.map((x) => [x.charger.id, x.reason]));
   const byId = new Map(r.results.map((c) => [c.charger.id, c]));
-  for (const ch of ctx.world.chargers) {
-    if (!passesFilter(ch, ctx)) continue;
+  for (const ch of filtered) {
+    if (!visible.has(ch.id)) continue;
     const condo = ctx.world.condos.find((c) => c.id === ch.condoId) || null;
     const isRes = !!condo && condo.id === ui.homeId;
     const res = byId.get(ch.id);
@@ -1804,8 +1848,9 @@ function drawMarkers(root, ctx, origin, r, car) {
     const faulty = ch.reliability < 0.75;
     const cls = faulty ? 'busy' : top.has(ch.id) ? 'pick' : off.has(ch.id) ? 'off' : occ >= 0.8 ? 'busy' : 'ok';
     const shared = condo && !isRes && isOpenToVisitors(condo, ctx.clock) ? '<b class="tag">Shared now</b>' : '';
-    const html = `<span class="pin ${cls}">${ch.type === 'DC' ? IC.bolt : ''}${rm(price)}${shared}</span>`;
-    const marker = L.marker([ch.lat, ch.lng], { icon: L.divIcon({ html: html.replace('class="pin ', `class="pin ${ui.selected === ch.id ? 'sel ' : ''}`), className: 'pin-wrap', iconSize: null }), title: ch.name })
+    const dimmed = ui.selected && ui.selected !== ch.id ? ' is-muted' : '';
+    const html = `<span class="pin ${cls}${dimmed}">${ch.type === 'DC' ? IC.bolt : ''}${rm(price)}${shared}</span>`;
+    const marker = L.marker([ch.lat, ch.lng], { icon: L.divIcon({ html: html.replace('class="pin ', `class="pin ${ui.selected === ch.id ? 'sel ' : ''}`), className: 'pin-wrap', iconSize: null }), title: ch.name, zIndexOffset: ui.selected === ch.id ? 600 : 0 })
       .bindPopup(popupHtml(ch, price, !!shared), { maxWidth: 260 }).addTo(layer);
     marker.on('click', () => { if (matchMedia('(max-width: 760px)').matches) marker.closePopup(); select(root, ctx, ch.id, false); });
     marker.on('popupopen', (e) => {
@@ -1822,12 +1867,15 @@ function select(root, ctx, id, fromList) {
   ui.selected = id;
   if (tab !== 'map' && tab !== 'plan') { location.hash = '#map'; return; }
   if (!last) return;
-  // Phone, Plan page: a tapped pin that is in the options list opens that card instead of a second sheet.
-  const phone = matchMedia('(max-width: 767px)').matches;
-  const inList = !!root.querySelector(`#d-sheet [data-pick="${CSS.escape(id)}"]`);
-  if (!(phone && tab === 'plan' && !fromList && inList)) renderDetail(root, ctx, last.ranking, last.car);
+  // Reveal hidden recommendations when selecting them from the list.
+  if (fromList && tab === 'plan' && !markers.has(id)) {
+    ui.mapMode = 'all';
+    update(root, ctx);
+  }
+  // Pins and "On map" always use the selected charger's detail card, including on phones.
+  renderDetail(root, ctx, last.ranking, last.car);
   highlightMarker(id);
-  // The Plan page's floating panel follows the selection (views/presentation.js).
+  // Let the Plan presentation close recommendations without opening them automatically.
   document.dispatchEvent(new CustomEvent('cassama:select', { detail: { id, fromList } }));
   if (fromList && map) {
     const m = markers.get(id);
@@ -1842,7 +1890,12 @@ function select(root, ctx, id, fromList) {
 
 // Outline the selected pin without redrawing every marker.
 function highlightMarker(id) {
-  for (const [key, m] of markers) m.getElement()?.querySelector('.pin')?.classList.toggle('sel', key === id);
+  for (const [key, m] of markers) {
+    const pin = m.getElement()?.querySelector('.pin');
+    pin?.classList.toggle('sel', key === id);
+    pin?.classList.toggle('is-muted', !!id && key !== id);
+    m.setZIndexOffset(key === id ? 600 : 0);
+  }
 }
 
 // Plan page: if the open charge-options panel covers the pin, slide the map just enough to show it.
@@ -1898,7 +1951,7 @@ function renderDetail(root, ctx, ranking, car) {
   aside.hidden = false;
   row.classList.add('has-detail');
   if (!wasOpen && map) map.invalidateSize();
-  aside.querySelector('[data-close]').addEventListener('click', () => { ui.selected = null; renderDetail(root, ctx, ranking, car); });
+  aside.querySelector('[data-close]').addEventListener('click', () => { ui.selected = null; highlightMarker(null); renderDetail(root, ctx, ranking, car); });
   const bookBtn = aside.querySelector('[data-detail-book]');
   if (bookBtn) bookBtn.addEventListener('click', () => {
     startBooking(root, ctx, ranking, car, d.id);
