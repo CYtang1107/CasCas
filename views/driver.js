@@ -27,6 +27,7 @@ import { TRIP_PLACES, HIGHWAY_CHARGERS } from '../data/trips.js';
 import { normalisePlate, isValidPlate, formatPlate, canAutoApprove, createPass } from '../engine/access.js';
 import { addSession, anonNumber } from '../state.js';
 import { esc, rm, rm0, fmtTime, fmtClock } from './format.js';
+import { scopedFlashHtml } from './flash.js';
 import { aiAvailable, aiOn, chat, chatHtml, sendChat, chatAction } from './chat.js';
 import { notify, notifyState, askPermission } from './notify.js';
 
@@ -145,7 +146,7 @@ function originPoint() {
 const placeOf = (id) => (id === 'custom' && ui.customTo
   ? { ...ui.customTo, trip: isTrip(originPoint(), ui.customTo) }
   : ALL_PLACES.find((p) => p.id === id) || PLACES[0]);
-const fresh = () => ({ carId: 'emas7', battery: 35, placeId: 'klem', homeId: '', parkFor: '30m', stage: 'pick', pick: null, flash: '', pending: null, plate: '', selected: null, prefs: noPrefs(), ask: '', askNote: '', arriveMin: 20, filters: emptyFilters(), from: null, customTo: null, locMsg: '', residentKey: '' });
+const fresh = () => ({ carId: 'emas7', battery: 35, placeId: 'klem', homeId: '', parkFor: '30m', stage: 'pick', pick: null, flash: '', flashTarget: 'activity', pending: null, plate: '', selected: null, prefs: noPrefs(), ask: '', askNote: '', arriveMin: 20, filters: emptyFilters(), from: null, customTo: null, locMsg: '', residentKey: '' });
 let ui = fresh();
 let map = null;
 let layer = null;
@@ -344,9 +345,7 @@ function summaryLine() {
 
 // Home: the one best charger for the current settings (or the trip), condo bays nearby, your month.
 function homeHtml(r, ctx, trip, place) {
-  const flash = ui.flash
-  ? `<p class="flash" role="alert">${esc(ui.flash)}</p>`
-  : '';
+  const flash = scopedFlashHtml(ui.flash, ui.flashTarget, 'home');
   const active = ui.stage !== 'pick' && ui.pick
     ? `<a class="banner" href="#activity">${IC.bolt}<span><b>${ui.stage === 'charging' ? (ui.pick.serverCharging && ui.pick.chargeStatus !== 'charging' ? 'Awaiting charger' : 'Charging now') : 'Bay held'}</b> at ${esc(ui.pick.name)}</span><span aria-hidden="true">›</span></a>` : '';
   const head = `<div class="sec-head"><h3>${trip ? `Your trip to ${esc(place.name)}` : 'Best for you now'}</h3><a href="#plan">Change</a></div>
@@ -560,7 +559,7 @@ function bindAccount(root, ctx) {
 // Activity: the booking or charge in progress, otherwise your history.
 function activityHtml(ctx, r) {
   if (ui.stage !== 'pick') return stageHtml(ctx, r);
-  const flash = ui.flash ? `<p class="flash">${esc(ui.flash)}</p>` : '';
+  const flash = scopedFlashHtml(ui.flash, ui.flashTarget, 'activity');
   const name = (id) => ctx.world.chargers.find((c) => c.id === id)?.name || id;
   const list = [...ctx.state.sessions].sort((a, b) => b.at - a.at).slice(0, 10);
   const source = document.getElementById('data-source')?.textContent || '';
@@ -958,7 +957,7 @@ function smallCard(c, i) {
 }
 
 function pickHtml(r, ctx) {
-  const flash = ui.flash ? `<p class="flash">${esc(ui.flash)}</p>` : '';
+  const flash = scopedFlashHtml(ui.flash, ui.flashTarget, 'plan');
   const head = `${flash}<div class="res-head"><h2>Best picks</h2><span class="mode mode-${r.mode}">${MODES[r.mode].label}</span></div>
     <p class="muted">${modeLine(r.mode)}. Charging to ${r.target}% (${Math.round(r.kWh)} kWh) · ${esc(fmtTime(ctx.clock))}</p>`;
   if (r.kWh < 1) return `${head}<p class="empty">Your battery is at ${ui.battery}%. No charge needed for this trip.</p>`;
@@ -1238,7 +1237,7 @@ function bind(root, ctx, ranking, car) {
     const p = ui.pick;
     if (ctx.api && p?.bookingRef) {
       const r = await ctx.api.cancel(p.bookingRef.id, p.bookingRef.cancelToken);
-      if (!r.ok) { ui.flash = `Couldn't cancel: ${r.error}`; update(root, ctx); return; }
+      if (!r.ok) { ui.flash = `Couldn't cancel: ${r.error}`; ui.flashTarget = 'activity'; update(root, ctx); return; }
     } else if (p?.pass) {
       ctx.state.visitorPasses = ctx.state.visitorPasses.filter((x) => x.id !== p.pass.id);
     }
@@ -1252,7 +1251,7 @@ function bind(root, ctx, ranking, car) {
     const record = { ok, note, at: ctx.clock.getTime() };
     if (ctx.api) {
       const r = await ctx.api.checkin({ chargerId: ui.pick.chargerId, ...record });
-      if (!r.ok) { ui.flash = `Couldn't save your check-in: ${r.error}`; update(root, ctx); return; }
+      if (!r.ok) { ui.flash = `Couldn't save your check-in: ${r.error}`; ui.flashTarget = 'activity'; update(root, ctx); return; }
     } else {
       const list = ctx.state.checkins[ui.pick.chargerId] || [];
       ctx.state.checkins[ui.pick.chargerId] = [...list, record];
@@ -1260,6 +1259,7 @@ function bind(root, ctx, ranking, car) {
     ctx.state.booking = null;
     ctx.save();
     ui.flash = ok ? 'Thanks. Your check-in raised this charger\'s reliability score.' : 'Thanks. The JMB and operator can now see this problem.';
+    ui.flashTarget = 'activity';
     stopChargingPoll();
     ui.stage = 'pick';
     ui.pick = null;
@@ -1273,6 +1273,7 @@ function startBooking(root, ctx, ranking, car, id) {
   const c = ranking.results.find((x) => x.charger.id === id);
   if (!c) return;
   ui.flash = '';
+  ui.flashTarget = 'activity';
   if (c.isSharedVisit) { ui.stage = 'plate'; ui.pending = c.charger.id; goActivity(root, ctx); return; }
   book(root, ctx, ranking, c, car, null);
 }
@@ -1280,7 +1281,7 @@ function startBooking(root, ctx, ranking, car, id) {
 function confirmVisitor(root, ctx, ranking, car, form) {
   const err = form.querySelector('#d-plate-err');
   const fail = (msg) => { err.textContent = msg; err.hidden = false; };
-  const back = (msg) => { ui.stage = 'pick'; ui.pending = null; ui.flash = msg; update(root, ctx); };
+  const back = (msg) => { ui.stage = 'pick'; ui.pending = null; ui.flash = msg; ui.flashTarget = 'activity'; update(root, ctx); };
   const c = ranking.results.find((x) => x.charger.id === ui.pending);
   if (!c) { back('That bay is no longer free. Pick another charger.'); return; }
   const plate = normalisePlate(ui.plate);
@@ -1306,6 +1307,7 @@ async function book(root, ctx, ranking, c, car, visitor) {
   
     if (!ui.residentKey) {
       ui.flash = 'Resident verification is required.';
+      ui.flashTarget = tab;
       update(root, ctx);
       return;
     }
@@ -1336,6 +1338,8 @@ async function book(root, ctx, ranking, c, car, visitor) {
     if (!r.ok) {
       ui.stage = 'pick';
       ui.pending = null;
+      // Booking failures belong on Activity, not the Home/Plan recommendations.
+      ui.flashTarget = 'activity';
     
       if (r.status === 403) {
         ui.residentKey = '';

@@ -172,6 +172,13 @@ export function renderJmb(root, ctx) {
             class="muted"
             aria-live="polite"
             hidden></p>
+          <button
+            type="button"
+            class="btn small"
+            id="j-copy-key"
+            hidden>
+            📋 Copy Resident Key
+          </button>
         </section>
       ` : ''}
     </div>
@@ -219,32 +226,60 @@ export function renderJmb(root, ctx) {
     });
   }
   priv.bind(root);
-  const issueBtn = $('#j-issue-key');
+  
+const issueBtn = $('#j-issue-key');
+const copyBtn = $('#j-copy-key');
+const output = $('#j-key-result');
 
-    issueBtn?.addEventListener('click', async () => {
-      issueBtn.disabled = true;
+let generatedKey = null;
 
-      const output = $('#j-key-result');
+// Generate resident key
+issueBtn?.addEventListener('click', async () => {
+  issueBtn.disabled = true;
+  generatedKey = null;
+  copyBtn.hidden = true;
+  copyBtn.textContent = '📋 Copy Resident Key';
 
-      const unitId = $('#j-resident-unit')?.value.trim() || '';
-      const result = await ctx.api.issueResidentKey(
-        condo.id,
-        token,
-        unitId
-      );
+  try {
+    const result = await ctx.api.issueResidentKey(
+      condo.id,
+      token
+    );
 
-      output.hidden = false;
+    output.hidden = false;
 
-      if (result.ok) {
-        output.textContent =
-          `Resident key (copy now): ${result.data.residentKey}. ${result.data.votingEligible ? 'Voting is enabled for the verified unit.' : 'Booking-only key; unit verification required for voting.'}`;
-      } else {
-        output.textContent =
-          `Could not issue key: ${result.error}`;
-      }
+    if (result.ok && result.data?.residentKey) {
+      generatedKey = result.data.residentKey;
 
-      issueBtn.disabled = false;
-    });
+      output.textContent =
+        `Resident key (copy now): ${generatedKey}`;
+
+      copyBtn.hidden = false;
+    } else {
+      output.textContent =
+        `Could not issue key: ${result.error || 'Unknown error'}`;
+    }
+  } catch (err) {
+    output.hidden = false;
+    output.textContent = 'Could not issue resident key.';
+  } finally {
+    issueBtn.disabled = false;
+  }
+});
+
+// Copy resident key
+copyBtn?.addEventListener('click', async () => {
+  if (!generatedKey) return;
+
+  try {
+    await navigator.clipboard.writeText(generatedKey);
+
+    copyBtn.textContent = '✓ Copied!';
+  } catch (err) {
+    copyBtn.textContent = 'Copy failed';
+  }
+});
+
   bindMaintenance(root, condo, ctx, priv.addMaintenance);
   bindLive(root, condo, ctx);
   bindRecordedRevenue(root, ctx, condo.id, token);
