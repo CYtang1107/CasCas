@@ -2,9 +2,9 @@
 // (no server) the health check gets a 404 and the app stays in local mode.
 const TIMEOUT_MS = 5000;
 
-async function call(fetchFn, method, url, body, token) {
+async function call(fetchFn, method, url, body, token, timeoutMs = TIMEOUT_MS) {
   const ctrl = typeof AbortController === 'function' ? new AbortController() : null;
-  const timer = ctrl ? setTimeout(() => ctrl.abort(), TIMEOUT_MS) : null;
+  const timer = ctrl ? setTimeout(() => ctrl.abort(), timeoutMs) : null;
   try {
     const headers = { 'content-type': 'application/json' };
     if (token) headers.authorization = `Bearer ${token}`;
@@ -36,6 +36,8 @@ export function createApi({ base = '', fetchFn = (...a) => globalThis.fetch(...a
     book: (body) => call(fetchFn, 'POST', u('bookings'), body),
     bookingCheckIn: (bookingId, cancelToken, bay) => call(fetchFn, 'POST', u(`bookings/${id(bookingId)}/check-in`), { cancelToken, bay }),
     bookingChargingStatus: (bookingId, cancelToken) => call(fetchFn, 'POST', u(`bookings/${id(bookingId)}/charging-status`), { cancelToken }),
+    bookingDemoOcpp: (bookingId, cancelToken, idTag, action) => call(fetchFn, 'POST',
+      u(`bookings/${id(bookingId)}/demo-ocpp`), { cancelToken, idTag, action }, undefined, 12000),
     cancel: (bookingId, cancelToken) => call(fetchFn, 'DELETE', u(`bookings/${id(bookingId)}`), { cancelToken }),
     checkin: (body) => call(fetchFn, 'POST', u('checkins'), body),
     summary: (condoId) => call(fetchFn, 'GET', u(`condos/${id(condoId)}/summary`)),

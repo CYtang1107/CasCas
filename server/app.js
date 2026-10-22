@@ -50,7 +50,7 @@ function chargerSource({ dataDir, fetchFn, key, now, condoSites }) {
   };
 }
 
-export function createApp({ dataDir, secret, pins, ocmKey = '', ocppPassword = crypto.randomBytes(16).toString('hex'), trafficKey = '', ai = null, fetchFn = globalThis.fetch, now = () => Date.now(), condos = CONDOS, trustProxy = false }) {
+export function createApp({ dataDir, secret, pins, ocmKey = '', ocppPassword = crypto.randomBytes(16).toString('hex'), trafficKey = '', ai = null, demoOcpp = false, fetchFn = globalThis.fetch, now = () => Date.now(), condos = CONDOS, trustProxy = false }) {
   const store = createStore(dataDir);
   // The OCPP transaction context is held in the charger connection. After a
   // server restart, an interrupted session must be reviewed, not auto-billed.
@@ -112,7 +112,7 @@ export function createApp({ dataDir, secret, pins, ocmKey = '', ocppPassword = c
   app.use('/api/jmb', (_req, res, next) => { res.set('Cache-Control', 'no-store'); next(); });
 
   app.get('/api/health', (req, res) => res.json({ ok: true }));
-  app.get('/api/config', (req, res) => res.json({ traffic: !!trafficKey, ai: !!ai?.key }));
+  app.get('/api/config', (req, res) => res.json({ traffic: !!trafficKey, ai: !!ai?.key, ...(demoOcpp && app.locals.sim ? { demoOcpp: true } : {}) }));
 
   // The CasSama assistant: an orchestrator model calling CasSama's own engines as tools.
   const agent = ai?.key ? createAgent({ ...ai, fetchFn, now }) : null;
@@ -423,8 +423,67 @@ export function createApp({ dataDir, secret, pins, ocmKey = '', ocppPassword = c
     if (!booking) return;
     const s = store.data.chargingSessions.find(x => x.bookingId === booking.id);
     if (!s) return res.json({ status: 'not_checked_in' });
-    const { id, bay, status, checkedInAt, startedAt, endedAt, energyKwh, revenueRm, reviewReason } = s;
-    return res.json({ id, bay, status, checkedInAt, startedAt, endedAt, energyKwh, revenueRm, reviewReason });
+    const { id, bay, status, checkedInAt, startedAt, endedAt, energyKwh, revenueRm, reviewReason, simulated } = s;
+    // Interim energy is informational only and exclusively backed by OCPP
+    // MeterValues for this reservation and transaction. It never enters JMB
+    // revenue until the StopTransaction reading passes reconciliation.
+    const point = csms.points.get(`${s.condoId}-${s.bay}`);
+    const linked = status === 'charging' && point?.linkedSessionId === s.id &&
+      point.txId === s.transactionId && Number.isFinite(s.meterStartWh) &&
+      Number.isFinite(point.energyWh);
+    const deltaWh = linked ? point.energyWh - s.meterStartWh : null;
+    const liveEnergyKwh = deltaWh !== null && deltaWh >= 0 && deltaWh <= 200_000
+      ? Math.round(deltaWh) / 1000 : null;
+    return res.json({ id, bay, status, checkedInAt, startedAt, endedAt, energyKwh, revenueRm, reviewReason,
+      ...(liveEnergyKwh !== null ? { liveEnergyKwh, livePowerKw: Math.max(0, point.powerW / 1000) } : {}),
+      simulated: simulated === true, demoOcpp: !!demoOcpp && !!app.locals.sim });
+  });
+
+  // Explicitly enabled demonstration only: send REAL OCPP messages through the in-process
+  // charger simulator, rather than marking a booking paid/completed via a browser timer.
+  app.post('/api/bookings/:id/demo-ocpp', async (req, res) => {
+    if (!demoOcpp || !app.locals.sim) return bad(res, 'Demo OCPP controls are disabled', 403);
+    const booking = ownedBooking(req, res);
+    if (!booking) return;
+    const session = store.data.chargingSessions.find(s => s.bookingId === booking.id);
+    if (!session) return bad(res, 'Check in before starting the demo', 409);
+    const action = req.body?.action;
+    if (action !== 'start' && action !== 'finish') return bad(res, 'Invalid demo action');
+    // Both operations require the same one-time tag issued at check-in. Never log the tag.
+    const tag = req.body?.idTag;
+    if (typeof tag !== 'string' || !/^CS[a-f0-9]{16}$/.test(tag) ||
+        crypto.createHash('sha256').update(tag).digest('hex') !== session.tagHash)
+      return bad(res, 'Invalid charger authorization tag', 403);
+    const point = csms.points.get(`${session.condoId}-${session.bay}`);
+    if (!point || !app.locals.sim.ownsConnection(session.condoId, session.bay, point.ws))
+      return bad(res, 'This bay is not connected to the CasSama demo simulator', 409);
+    if (action === 'start') {
+      if (session.status !== 'awaiting_charge' || now() < session.bookingStart || now() >= session.bookingEnd)
+        return bad(res, 'Demo start requires an active, checked-in booking', 409);
+    } else if (session.status !== 'charging' || session.simulated !== true) {
+      return bad(res, 'No simulated booking session is charging', 409);
+    }
+    try {
+      // Respect site power and the reserved time window; all quantities are
+      // an illustrative demo sample, never actual kWh supplied to a vehicle.
+      const hours = (session.bookingEnd - session.bookingStart) / 3600000;
+      const kwh = Math.round(Math.min(5, Math.max(0.1, Math.min(7, point.limitKw) * hours * 0.85)) * 1000) / 1000;
+      if (action === 'start') {
+        await app.locals.sim.startBooking(session.condoId, session.bay, tag, kwh);
+        if (session.status !== 'charging') return bad(res, 'OCPP did not confirm charging', 409);
+        session.simulated = true;
+        store.save();
+        return res.json({ status: session.status, simulated: true });
+      }
+      await app.locals.sim.finishBooking(session.condoId, session.bay, kwh);
+      // StopTransaction replaces the stored session with its settled copy.
+      const settled = store.data.chargingSessions.find(s => s.id === session.id);
+      if (settled?.status !== 'completed') return bad(res, 'OCPP completion requires reconciliation', 409);
+      return res.json({ status: settled.status, simulated: true, energyKwh: settled.energyKwh,
+        revenueRm: settled.revenueRm });
+    } catch (error) {
+      return bad(res, error.message || 'Simulator could not finish the transaction', 409);
+    }
   });
 
   app.get('/api/jmb/:condoId/charging-revenue', requireJmb, (req, res) => {

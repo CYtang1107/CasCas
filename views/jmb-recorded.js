@@ -16,7 +16,7 @@ export function recordedRevenueHtml(api, condoId) {
 export function recordedRevenueDetails(data) {
   const f = data.financials;
   const rows = data.sessions.map(s => `<tr>
-    <td>Bay ${num(s.bay)}</td><td>${esc(s.role)}</td>
+    <td>Bay ${num(s.bay)}${s.simulated ? ' · DEMO' : ''}</td><td>${esc(s.role)}</td>
     <td>${esc(new Date(s.endedAt).toLocaleString('en-MY', { timeZone: 'Asia/Kuala_Lumpur', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }))}</td>
     <td class="n">${Number(s.energyKwh).toFixed(2)}</td><td class="n">${rm(s.revenueRm)}</td>
   </tr>`).join('');
@@ -26,6 +26,7 @@ export function recordedRevenueDetails(data) {
     <div class="kpi"><span>Calculated receipts</span><b>${rm(f.revenue)}</b></div>
     <div class="kpi"><span>Estimated JMB allocation</span><b>${rm(f.jmbIncome)}</b></div>
   </div>
+  ${data.simulatedSessionCount ? `<p class="notice">${num(data.simulatedSessionCount)} session(s) are OCPP SIMULATOR DEMOS — no electricity delivered or money collected. The calculated receipts are illustrative.</p>` : ''}
   <p class="muted">Estimated expenses: electricity ${rm(f.electricityCost)}, variable ${rm(f.variableCost)}, fixed ${rm(f.fixedMonthly)}, maintenance ${rm(f.maintenanceRm)}.
     Estimated operating surplus: <b>${rm(f.operatingSurplus)}</b>. CPO/partner allocation: ${rm(f.partnerIncome)}.</p>
   <div class="tbl"><table><thead><tr><th>Bay</th><th>Driver</th><th>Completed (MYT)</th><th class="n">kWh</th><th class="n">Calculated receipt</th></tr></thead>

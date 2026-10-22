@@ -79,7 +79,7 @@ export function renderJmb(root, ctx) {
       <section class="card"><h3>An average day: who charges when</h3>
         ${barChart24({ a: sim.residentByHour, b: sim.visitorByHour, shade: PEAK_HOURS, aLabel: 'Residents', bLabel: 'Outside drivers (shared bays)' })}
         <p class="muted">Shaded hours are TNB peak (weekdays 2–10 PM). Residents charge in the evening; outside drivers fill the bays they leave empty during the day.</p>
-        ${quietHtml(condo, charger, sim)}
+        ${quietHtml(condo, charger, sim, start)}
       </section>
       <section class="card"><h3>Illustrative income over 6 months</h3>
         ${lineChart({ labels: months, series: [

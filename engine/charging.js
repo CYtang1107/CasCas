@@ -113,13 +113,14 @@ export function chargingRevenueReport({ sessions, condo, maintenance, month }) {
     variablePerKwh: PILOT_COSTS.variableRmPerKwh, fixedMonthly: PILOT_COSTS.fixedMonthlyRm,
     maintenanceRm, jmbShare: condo.jmbShare, units: condo.units,
   });
-  const safeRows = completed.map(({ id, bookingId, bay, role, startedAt, endedAt, energyKwh, priceRmPerKwh, revenueRm }) =>
-    ({ id, bookingId, bay, role, startedAt, endedAt, energyKwh, priceRmPerKwh, revenueRm }));
+  const safeRows = completed.map(({ id, bookingId, bay, role, startedAt, endedAt, energyKwh, priceRmPerKwh, revenueRm, simulated }) =>
+    ({ id, bookingId, bay, role, startedAt, endedAt, energyKwh, priceRmPerKwh, revenueRm, simulated: simulated === true }));
   return {
     condoId: condo.id, month, sessionCount: completed.length, sessions: safeRows,
+    simulatedSessionCount: completed.filter(s => s.simulated === true).length,
     reconciliation: { reviewCount: reviewItems.length, excludedCompletedCount, items: reviewItems },
     financials, costAssumptions: { ...PILOT_COSTS, jmbShare: condo.jmbShare },
     evidence: 'booked OCPP transactions; no forecasts or simulated month totals included',
-    warning: 'Only energy and receipts are derived from linked meter readings. Electricity, variable/fixed costs and revenue share are illustrative assumptions; this is not an audited profit statement.',
+    warning: 'Only energy and receipts are derived from linked OCPP meter readings, including explicitly labelled SIMULATED charger sessions where applicable. No collected payments are verified. Electricity, variable/fixed costs and revenue share are illustrative assumptions; this is not an audited profit statement.',
   };
 }

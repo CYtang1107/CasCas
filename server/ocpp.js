@@ -128,6 +128,8 @@ export function createCsms({ store, condos, password, now = () => Date.now() }) 
       return { idTagInfo: { status: 'Accepted' } };
     },
     MeterValues: (p, m) => {
+      // A linked session must not display readings from a different transaction.
+      if (p.linkedSessionId && m.transactionId != null && m.transactionId !== p.txId) return {};
       const r = meterReading(m);
       if (r.energyWh != null) p.energyWh = r.energyWh;
       if (r.powerW != null) p.powerW = r.powerW;

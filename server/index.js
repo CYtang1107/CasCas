@@ -22,6 +22,8 @@ const app = createApp({
   ocmKey: process.env.OCM_KEY || '',
   ocppPassword,
   trafficKey: process.env.TOMTOM_KEY || '',
+  // Explicit opt-in for a controlled prototype demonstration. NEVER use with real charger deployments.
+  demoOcpp: process.env.DEMO_OCPP_CONTROLS === '1',
   // Same OpenAI-compatible key as VO-AI (DashScope / Qwen). Without one, Ask CasSama uses its rule-based parser.
   ai: {
     key: process.env.AI_API_KEY || process.env.DASHSCOPE_API_KEY || '',
@@ -39,8 +41,10 @@ const port = Number(process.env.PORT) || 4300;
 const server = app.listen(port, () => {
   console.log(`CasSama shared server on http://localhost:${port} · OCPP 1.6-J at ws://localhost:${port}/ocpp/<condo>-<bay>`);
   if (process.env.OCPP_SIM !== '0') {
-    app.locals.sim = startSimulator({ url: `ws://127.0.0.1:${port}`, password: ocppPassword, condos: CONDOS });
-    console.log('Simulated OCPP chargers started (OCPP_SIM=0 turns them off)');
+    const demo = process.env.DEMO_OCPP_CONTROLS === '1';
+    app.locals.sim = startSimulator({ url: `ws://127.0.0.1:${port}`, password: ocppPassword, condos: CONDOS,
+      ...(demo ? { pStart: 0, pStop: 0, tickMs: 1000 } : {}) });
+    console.log(`Simulated OCPP chargers started (OCPP_SIM=0 turns them off)${demo ? ' · DEMO controls enabled, auto traffic off' : ''}`);
   }
 });
 app.locals.attachOcpp(server);

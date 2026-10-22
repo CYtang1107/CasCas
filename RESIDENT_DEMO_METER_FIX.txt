@@ -1,0 +1,32 @@
+# Residential booking-linked OCPP demo meter
+
+The public-charge experience uses its offline timer and ring; booked condo bays
+use OCPP. The restored ring was gated on an async `simulated` flag, so a start
+could display *OCPP charging* without immediately showing meter progress.
+
+After clicking **Start simulated charge**, the booking-authorized demo endpoint
+returns `{status:'charging', simulated:true}`. The frontend now accepts that
+confirmation at once and preserves it across stale status polls, while the ring's
+energy readings still come exclusively from OCPP `MeterValues`.
+
+Real OCPP sessions are not inferred to be demos based on charging status alone.
+The ring stops once a session is completed or demo controls are unavailable.
+Neither estimated battery percentage nor interim energy creates a JMB receipt;
+that still requires OCPP `StopTransaction`.
+
+## Verify your running source
+
+1. Restart with `DEMO_OCPP_CONTROLS=1 npm start` from the folder you patched.
+2. Run `curl -fsS http://localhost:4300/views/driver.js | grep 'confirmDemoStart'`.
+   If nothing prints, the server is serving an **older frontend or another project folder**.
+3. Open Chrome, hard refresh with Cmd+Shift+R, make a **new** condo booking,
+   check in, start simulated charging, and leave Activity open for 5–10 seconds.
+4. The battery ring appears as soon as the demo start succeeds and follows OCPP
+   meter samples (default every 5 seconds). After Finish, check the DEMO-labelled
+   JMB calculated receipt.
+
+Run locally:
+`node --test test/demo-meter-ui.test.js`
+`npm test`
+`npm run pilot:verify`
+`npm run acceptance:verify`

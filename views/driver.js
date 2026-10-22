@@ -20,6 +20,7 @@ import { CONDOS } from '../data/condos.js';
 import { osrmUrl, parseOsrm, stepText, typicalTraffic, refineTrip } from '../engine/roads.js';
 import { parseTtRoute, parseIncidents, incidentsNear } from '../engine/tomtom.js';
 import { bestWindow } from '../engine/schedule.js';
+import { confirmDemoStart, adoptOcppStatus, showDemoOcppMeter } from '../engine/demo-meter.js';
 import { parseRequest, askRoute, looksLikeQuestion } from '../engine/assistant.js';
 import { planTrip } from '../engine/trip.js';
 import { TRIP_PLACES, HIGHWAY_CHARGERS } from '../data/trips.js';
@@ -1035,14 +1036,34 @@ function stageHtml(ctx, r) {
     if (p.serverCharging) {
       const s = p.chargeStatus || 'awaiting_charge';
       const label = s === 'charging' ? 'Charging at the bay' : 'Waiting for charger';
-      const instructions = s === 'charging'
-        ? 'The connected charger has confirmed the OCPP transaction. Stop charging on the charger itself; CasSama will record the final meter reading.'
-        : 'The reservation is checked in, but the charger has not started. Present the authorization tag at the assigned OCPP charger. CasSama cannot remotely start it.';
+      const instructions = p.demoOcpp
+        ? (s === 'charging'
+          ? 'Demo OCPP transaction running. Finish the simulated session to record a meter reading and calculated receipt.'
+          : 'Your bay is checked in. Start a controlled simulated OCPP transaction to show the complete demo journey.')
+        : (s === 'charging'
+          ? 'The connected charger has confirmed the OCPP transaction. Stop charging on the charger itself; CasSama will record the final meter reading.'
+          : 'The reservation is checked in, but the charger has not started. Present the authorization tag at the assigned OCPP charger. CasSama cannot remotely start it.');
+      // Bring back the original circular meter for controlled OCPP demos.
+      // This estimate combines the driver's declared initial battery with
+      // *interim OCPP simulator readings*. It is never used for billing.
+      const demoActive = showDemoOcppMeter(p);
+      const kwh = Math.max(0, Number(p.liveEnergyKwh) || 0);
+      const pct = Math.min(100, Math.max(0, p.startPct + (kwh / p.batteryKwh) * 100));
+      const circumference = 2 * Math.PI * 102;
+      const meter = demoActive ? `<div class="ring" role="progressbar" aria-label="Estimated battery percentage during OCPP demo" aria-valuenow="${pct.toFixed(1)}" aria-valuemin="0" aria-valuemax="100">
+        <svg viewBox="0 0 220 220" aria-hidden="true"><circle class="track" cx="110" cy="110" r="102"/>
+          <circle class="value" cx="110" cy="110" r="102" stroke-dasharray="${circumference.toFixed(1)}" stroke-dashoffset="${(circumference * (1 - pct / 100)).toFixed(1)}"/></svg>
+        <div class="label"><b>${pct.toFixed(1)}%</b><span>+${kwh.toFixed(2)} kWh</span></div>
+      </div><p class="muted">DEMO battery estimate based on OCPP simulator meter readings and your starting battery level. Not a vehicle battery sensor or a payment receipt.</p>
+      <p class="muted">Simulated power: ${Number.isFinite(p.livePowerKw) ? p.livePowerKw.toFixed(1) : '—'} kW · 1 second ≈ 1 simulated minute.</p>` : '';
       return `${journey}<div class="charge-view">
         <div class="head"><h2>${esc(label)}</h2><span class="chip ${s === 'charging' ? 'on' : 'amber'}">${esc(s === 'charging' ? 'OCPP charging' : 'Awaiting OCPP')}</span></div>
         <p><b>${esc(p.name)}</b> · Bay ${p.bay}</p>
+        ${meter}
         <p>${esc(instructions)}</p>
-        ${p.idTag ? `<label class="field">Charger authorization tag <code class="charge-id-tag">${esc(p.idTag)}</code></label>
+        ${p.demoOcpp ? `<p class="notice">DEMO SIMULATION — no physical charging or payment. A simulated OCPP StartTransaction/StopTransaction will be sent.</p>
+          ${p.idTag ? `<button class="btn primary" type="button" data-act="demo-ocpp-${s === 'charging' ? 'finish' : 'start'}" ${p.demoBusy ? 'disabled' : ''}>${p.demoBusy ? 'Working…' : s === 'charging' ? 'Complete simulated charge' : 'Start simulated charge'}</button>` : ''}`
+          : p.idTag ? `<label class="field">Charger authorization tag <code class="charge-id-tag">${esc(p.idTag)}</code></label>
           <button class="btn" type="button" data-act="copy-tag">Copy authorization tag</button>`
           : '<p class="muted">The one-time tag is no longer in this page. Do not share it publicly.</p>'}
         ${p.chargeError ? `<p class="error" role="alert">${esc(p.chargeError)}</p>` : ''}
@@ -1080,7 +1101,7 @@ function stageHtml(ctx, r) {
     return `${journey}<h2>${completed ? 'Charging session completed' : 'Charging needs review'}</h2>
       <p class="muted">${completed ? `Bay ${p.bay} · ${Number(p.recordedEnergy || 0).toFixed(2)} kWh delivered · calculated charging receipt ${rm(p.recordedRevenue || 0)}.`
       : `Bay ${p.bay}. ${esc(p.reviewReason || 'The charging session needs operator review. No receipt was recorded.')}`}</p>
-      <p class="muted">${completed ? 'Metered usage is not proof of payment. Please move your car before the reserved slot ends.'
+      <p class="muted">${completed ? (p.simulated ? 'DEMO SIMULATION — metered usage and calculated receipt came from a simulated charger, not real electricity or payment.' : 'Metered usage is not proof of payment. Please move your car before the reserved slot ends.')
       : 'Incomplete or invalid OCPP readings are excluded from JMB recorded receipts.'}</p>
       <label class="field">Note (optional) <input id="d-note" type="text" maxlength="120" placeholder="e.g. cable damaged on bay 3"></label>
       <div class="btn-row"><button class="btn primary" type="button" data-act="ok">Finish</button>
@@ -1122,7 +1143,7 @@ async function refreshChargingStatus() {
     p.chargeError = `Couldn't retrieve charging status: ${response.error}`;
   } else {
     p.chargeError = '';
-    p.chargeStatus = response.data.status;
+    adoptOcppStatus(p, response.data);
     if (response.data.status === 'completed' || response.data.status === 'needs_review') {
       p.recordedEnergy = response.data.energyKwh;
       p.recordedRevenue = response.data.revenueRm;
@@ -1138,7 +1159,7 @@ async function refreshChargingStatus() {
 function startChargingPoll() {
   if (chargingPoll || !ui.pick?.serverCharging || ui.stage !== 'charging') return;
   refreshChargingStatus();
-  chargingPoll = setInterval(refreshChargingStatus, 5000);
+  chargingPoll = setInterval(refreshChargingStatus, 2000);
 }
 
 function bind(root, ctx, ranking, car) {
@@ -1190,6 +1211,23 @@ function bind(root, ctx, ranking, car) {
     if (ui.stage === 'charging') startChargingPoll();
   });
   act('refresh-charge', refreshChargingStatus);
+  for (const action of ['start', 'finish']) act(`demo-ocpp-${action}`, async () => {
+    const p = ui.pick;
+    if (!p?.serverCharging || !p.demoOcpp || !p.idTag || p.demoBusy) return;
+    p.demoBusy = true;
+    p.chargeError = '';
+    update(root, ctx);
+    const result = await ctx.api.bookingDemoOcpp(p.bookingRef.id, p.bookingRef.cancelToken, p.idTag, action);
+    if (ui.pick !== p) return;
+    p.demoBusy = false;
+    if (!result.ok) p.chargeError = `Demo charging failed: ${result.error}`;
+    else if (action === 'start') confirmDemoStart(p, result.data);
+    // Render the confirmed simulator session immediately, rather than hiding
+    // the ring until an asynchronous charging-status poll catches up.
+    if (ui.pick === p && ui.stage === 'charging') update(root, ctx);
+    await refreshChargingStatus();
+    if (ui.pick === p && ui.stage === 'charging') update(root, ctx);
+  });
   act('copy-tag', async () => {
     const tag = ui.pick?.idTag;
     if (!tag) return;
