@@ -357,7 +357,8 @@ export function createApp({ dataDir, secret, pins, ocmKey = '', ocppPassword = c
       }
     }
 
-    d.sessions = [...d.sessions, session].slice(-MAX_SESSIONS);
+    // This is an estimated booking, not a metered/paid charging transaction.
+    d.sessions = [...d.sessions, { ...session, bookingId: id, status: 'booked' }].slice(-MAX_SESSIONS);
     d.bookings.push({
       id,
       ...booking,
@@ -510,6 +511,7 @@ export function createApp({ dataDir, secret, pins, ocmKey = '', ocppPassword = c
       return bad(res, 'Cannot cancel a booking after charging has started', 409);
     d.chargingSessions = d.chargingSessions.filter((s) => s.bookingId !== b.id);
     d.bookings = d.bookings.filter((x) => x !== b);
+    d.sessions = d.sessions.filter((s) => s.bookingId !== b.id);
     d.passes = d.passes.filter((p) => p.bookingId !== b.id);
     store.save();
     res.json({ ok: true });

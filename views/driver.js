@@ -561,14 +561,15 @@ function activityHtml(ctx, r) {
   if (ui.stage !== 'pick') return stageHtml(ctx, r);
   const flash = scopedFlashHtml(ui.flash, ui.flashTarget, 'activity');
   const name = (id) => ctx.world.chargers.find((c) => c.id === id)?.name || id;
-  const list = [...ctx.state.sessions].sort((a, b) => b.at - a.at).slice(0, 10);
+  const list = ctx.state.sessions.filter((s) => s.status === 'demo_completed' || s.status === 'completed')
+    .sort((a, b) => b.at - a.at).slice(0, 10);
   const source = document.getElementById('data-source')?.textContent || '';
   const mode = document.getElementById('data-mode')?.textContent || '';
   return `${flash}<h2>Activity</h2>
     <div class="empty-state">${IC.bolt}<p><b>No booking right now.</b> Book a bay from Home or Plan and it appears here: the hold, the QR code and the live charge.</p>
       <div class="btn-row"><a class="btn primary" href="#home">Find a charger</a><a class="btn" href="#plan">Plan a trip</a></div></div>
     ${monthHtml(ctx)}
-    <section class="history"><h3>Recent sessions</h3>
+    <section class="history"><h3>Completed demo charging sessions</h3>
       ${list.length ? `<ul class="hist">${list.map((x) => `<li><div><b>${esc(name(x.chargerId))}</b><span class="muted">${esc(fmtTime(new Date(x.at)))} · ${x.kWh.toFixed(1)} kWh</span></div><b class="price">${rm(x.costRm)}</b></li>`).join('')}</ul>`
         : '<p class="muted">No sessions on this device yet.</p>'}
     </section>
@@ -903,7 +904,7 @@ function monthHtml(ctx) {
   const m = monthSummary(ctx.state.sessions, ctx.clock);
   return `<section class="month" aria-label="Your month"><h3>Your ${esc(ctx.clock.toLocaleString('en-MY', { month: 'long' }))}</h3>
     <div class="mstats"><div><b>${m.sessions}</b><span>sessions</span></div><div><b>${m.kWh.toFixed(1)}</b><span>kWh charged</span></div>
-    <div><b>${rm(m.paidRm)}</b><span>paid</span></div><div><b>${Math.round(m.co2Kg)} kg</b><span>CO₂ avoided</span></div></div>
+    <div><b>${rm(m.paidRm)}</b><span>demo charging cost</span></div><div><b>${Math.round(m.co2Kg)} kg</b><span>CO₂ avoided</span></div></div>
     ${m.sessions ? '' : '<p class="muted">Book a charge and it shows up here.</p>'}</section>`;
 }
 
@@ -1245,7 +1246,12 @@ function bind(root, ctx, ranking, car) {
     ui.stage = 'pick'; ui.pick = null; ctx.state.booking = null; ctx.save();
     if (ctx.api) ctx.refresh(); else update(root, ctx);
   });
-  act('stop', () => { stopTimer(); ui.stage = 'done'; update(root, ctx); });
+  act('stop', () => {
+    stopTimer();
+    recordDemoCharge(ui.pick, ctx);
+    ui.stage = 'done';
+    update(root, ctx);
+  });
   const checkin = async (ok) => {
     const note = (box.querySelector('#d-note')?.value || '').trim();
     const record = { ok, note, at: ctx.clock.getTime() };
@@ -1373,9 +1379,7 @@ async function book(root, ctx, ranking, c, car, visitor) {
     }
     pass = r.data.pass || null;
     bookingRef = { id: r.data.bookingId, cancelToken: r.data.cancelToken };
-    addSession(ctx.state, session);
   } else {
-    addSession(ctx.state, session);
     if (visitor) {
       pass = createPass({ id: `pass-${start}-${c.charger.id}`, condoId: c.condo.id, chargerId: c.charger.id, plate: visitor.plate, slotStart: start, minutes: slotMinutes, now: ctx.clock.getTime() });
       ctx.state.visitorPasses = [...ctx.state.visitorPasses, pass];
@@ -1385,7 +1389,7 @@ async function book(root, ctx, ranking, c, car, visitor) {
   ui.pick = {
     chargerId: c.charger.id, name: c.charger.name, price: c.price, kWhTarget: c.deliveredKwh, power,
     batteryKwh: car.batteryKwh, startPct: ui.battery, bookedAt: ctx.clock.getTime(),
-    session: { kWh: 0, minutes: 0 }, pass, bookingRef,
+    session: { kWh: 0, minutes: 0 }, pendingSession: session, pass, bookingRef,
     // Only confirmed residential bookings can be linked to a physical OCPP bay.
     condoId: c.condo?.id || null,
     serverCharging: !!(ctx.api && c.condo && bookingRef),
@@ -1407,6 +1411,23 @@ function goActivity(root, ctx) {
   else update(root, ctx);
 }
 
+// The prototype timer is not a payment processor. Record demo energy and
+// estimated cost once charging finishes, not when the user books a slot.
+function recordDemoCharge(p, ctx) {
+  if (!p?.pendingSession || !ctx) return;
+  const kWh = Math.round(p.session.kWh * 100) / 100;
+  if (kWh > 0) {
+    addSession(ctx.state, {
+      ...p.pendingSession,
+      kWh,
+      costRm: Math.round(kWh * p.price * 100) / 100,
+      status: 'demo_completed',
+    });
+    ctx.save();
+  }
+  p.pendingSession = null;
+}
+
 function startTimer() {
   stopTimer();
   timer = setInterval(() => {
@@ -1418,7 +1439,9 @@ function startTimer() {
     const nowSim = p.bookedAt + p.session.minutes * 60000;
     if (p.slotEnd && p.slotEnd - nowSim <= 15 * 60000) notify(profile, `slot-${p.bookedAt}`, 'CasSama: 15 minutes left', `Your charging slot ends at ${fmtClock(new Date(p.slotEnd))}. After that it is ${rm(CONST.overstayRmPer10Min)} per 10 min.`);
     if (p.session.kWh >= p.kWhTarget) {
-      stopTimer(); ui.stage = 'done';
+      stopTimer();
+      if (current?.ctx) recordDemoCharge(p, current.ctx);
+      ui.stage = 'done';
       notify(profile, `done-${p.bookedAt}`, 'CasSama: charging complete', `${p.session.kWh.toFixed(1)} kWh added. Please move your car by ${fmtClock(new Date(p.slotEnd))}.`);
     }
     if (current?.root.querySelector('#d-activity')) update(current.root, current.ctx);

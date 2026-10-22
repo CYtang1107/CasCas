@@ -87,7 +87,9 @@ test('only the booker can cancel; cancelling removes the pass', async () => {
   assert.equal((await s.call('DELETE', `/api/bookings/${r.bookingId}`, { cancelToken: r.cancelToken })).status, 200);
   assert.equal((await s.call('DELETE', `/api/bookings/${r.bookingId}`, { cancelToken: r.cancelToken })).status, 404);
   const login = (await s.call('POST', '/api/jmb/login', { condoId: 'lumina', pin: '4821' })).body;
-  assert.deepEqual((await s.call('GET', '/api/jmb/lumina', null, login.token)).body.passes, []);
+  const afterCancel = (await s.call('GET', '/api/jmb/lumina', null, login.token)).body;
+  assert.deepEqual(afterCancel.passes, []);
+  assert.equal(afterCancel.sessions.length, 0, 'cancelled booking estimate must not remain in the session log');
   await s.close();
 });
 

@@ -16,7 +16,23 @@ function cardNamed(root, title) {
   ) || null;
 }
 
+let recordedActivityObserver = null;
+
+function moveRecordedChargingActivity(root, operationsPanel) {
+  for (const heading of root.querySelectorAll('h2, h3, h4')) {
+    if (!/^recorded charging (activity|sessions?)\b/i.test(heading.textContent.trim())) continue;
+    // Move the existing node, never duplicate its content or lose bound events.
+    const card = heading.closest('.card, section, article');
+    if (card && card !== operationsPanel && !card.contains(operationsPanel)
+        && !operationsPanel.contains(card)) operationsPanel.append(card);
+  }
+}
+
 export function installJmbTabs(root) {
+  if (recordedActivityObserver) {
+    recordedActivityObserver.disconnect();
+    recordedActivityObserver = null;
+  }
   const portal = root.querySelector('.portal');
   const main = portal?.querySelector(':scope > .jmb');
   const nav = portal?.querySelector(':scope > .side');
@@ -122,6 +138,19 @@ export function installJmbTabs(root) {
     activate(target.dataset.jmbTab);
     target.focus();
   });
+  // This newer financial/activity card was added after the original tab layout.
+  // Keep it on Operations rather than leaving it visible below every tab.
+  const operationsPanel = panels.get('operations');
+  moveRecordedChargingActivity(root, operationsPanel);
+  recordedActivityObserver = new MutationObserver(() => {
+    if (!root.contains(stack)) {
+      recordedActivityObserver?.disconnect();
+      recordedActivityObserver = null;
+      return;
+    }
+    moveRecordedChargingActivity(root, operationsPanel);
+  });
+  recordedActivityObserver.observe(root, { childList: true, subtree: true });
   activate(activeTab);
   return true;
 }

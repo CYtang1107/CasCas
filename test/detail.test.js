@@ -79,7 +79,7 @@ test('availability: free bays out of the total, never below zero', () => {
 
 test('month summary: sessions, energy, paid and CO2 for this month only', () => {
   const at = (d) => new Date(2026, 9, d, 10).getTime();
-  const s = monthSummary([{ at: at(2), kWh: 20, costRm: 22 }, { at: at(15), kWh: 10, costRm: 9 }, { at: new Date(2026, 8, 30).getTime(), kWh: 50, costRm: 60 }], new Date(2026, 9, 21));
+  const s = monthSummary([{ at: at(2), kWh: 20, costRm: 22, status: 'completed' }, { at: at(15), kWh: 10, costRm: 9, status: 'demo_completed' }, { at: new Date(2026, 8, 30).getTime(), kWh: 50, costRm: 60 }], new Date(2026, 9, 21));
   assert.equal(s.sessions, 2);
   assert.equal(s.kWh, 30);
   assert.equal(s.paidRm, 31);
@@ -89,4 +89,18 @@ test('month summary: sessions, energy, paid and CO2 for this month only', () => 
 test('live bays win over the estimate when we have them', () => {
   assert.deepEqual(availability({ bays: 4, liveAvail: { total: 2, available: 1 }, liveOcc: 0.5 }, 0.9), { free: 1, total: 2, live: true });
   assert.deepEqual(availability({ bays: 4, liveAvail: { total: 2, available: 1 } }, 0.5), { free: 2, total: 4 }, 'live data but a different demo time: estimate');
+});
+
+
+test('cancelled and booking-only estimates are never counted as completed charging', () => {
+  const at = new Date(2026, 9, 21, 11).getTime();
+  const summary = monthSummary([
+    { at, kWh: 20, costRm: 22, status: 'booked' },
+    { at, kWh: 14, costRm: 15, status: 'cancelled' },
+    { at, kWh: 12, costRm: 12 }, // legacy estimate without payment evidence
+    { at, kWh: 8, costRm: 9, status: 'demo_completed' },
+  ], new Date(2026, 9, 22));
+  assert.equal(summary.sessions, 1);
+  assert.equal(summary.kWh, 8);
+  assert.equal(summary.paidRm, 9);
 });
