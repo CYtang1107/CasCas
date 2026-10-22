@@ -8,7 +8,7 @@ let examplesOpen = false;
 let homeShortcuts = null;
 const mobileLayout = matchMedia('(max-width: 767px)');
 mobileLayout.addEventListener('change', decorate);
-// Plan page: the charge-options panel floats over the map. Inactive it is a faint ghost the map can
+// Plan page: the charge-options panel floats over the map. Inactive it is hidden and the map can
 // be used through; hovering its tab hints it (mouse only); a click on the tab or a pin activates it.
 const panel = { state: 'inactive', selected: null };
 const canHover = matchMedia('(hover: hover) and (pointer: fine)');
