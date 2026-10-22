@@ -1244,7 +1244,7 @@ main:has(> .loading) { min-height: 100vh; min-height: 100dvh; }
 .portal.jmb-tab-layout > .jmb { min-width: 0; }
 .portal.jmb-tab-layout .jmb-tabs {
   display: flex; gap: 8px; flex-wrap: nowrap; overflow-x: auto; overscroll-behavior-x: contain;
-  position: sticky; top: 96px; z-index: 30;
+  position: static; /* scrolls with the page; it used to stick under the header and cover the cards */
   padding: 12px 0 14px; margin: 0 0 20px;
   border: 0; border-bottom: 1px solid var(--ink-line, var(--line));
   background: var(--bg); scrollbar-width: thin;
